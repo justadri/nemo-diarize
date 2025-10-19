@@ -1,14 +1,3 @@
-
-# BEGIN: user added these matplotlib lines to ensure any plots do not pop-up in their UI
-import matplotlib
-matplotlib.use('Agg')  # Set the backend to non-interactive
-import matplotlib.pyplot as plt
-plt.ioff()
-import os
-os.environ['TERM'] = 'dumb'
-# END: user added these matplotlib lines to ensure any plots do not pop-up in their UI
-# filename: nemo_processor.py
-
 import os
 import json
 import torch
@@ -24,6 +13,8 @@ class NemoProcessor:
     
     def __init__(self):
         """Initialize the NeMo processor."""
+        # Store config separately from diarizer
+        self.cfg = None
         self.diarizer = self.initialize_diarizer()
     
     def initialize_diarizer(self):
@@ -37,7 +28,7 @@ class NemoProcessor:
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
             
             # Create the config for the diarizer
-            cfg = {
+            cfg_dict = {
                 "diarizer": {
                     "manifest_filepath": "manifest.json",
                     "out_dir": "./diarization_results",
@@ -73,11 +64,11 @@ class NemoProcessor:
                 "device": device
             }
             
-            # Convert to OmegaConf
-            cfg = OmegaConf.create(cfg)
+            # Convert to OmegaConf and store it separately
+            self.cfg = OmegaConf.create(cfg_dict)
             
-            # Initialize the diarizer
-            diarizer = ClusteringDiarizer(cfg=cfg)
+            # Initialize the diarizer with our config
+            diarizer = ClusteringDiarizer(cfg=self.cfg)
             
             logger.info("NeMo ClusteringDiarizer model initialized successfully.")
             return diarizer
@@ -123,7 +114,7 @@ class NemoProcessor:
             bool: True if processing was successful, False otherwise
             str: Path to the output RTTM file if successful, None otherwise
         """
-        if self.diarizer is None:
+        if self.diarizer is None or self.cfg is None:
             logger.error("NeMo diarizer is not initialized")
             return False, None
             
@@ -151,9 +142,10 @@ class NemoProcessor:
             if not manifest_path:
                 return False, None
             
-            # Update the manifest path in the diarizer config
-            self.diarizer._cfg.manifest_filepath = manifest_path
-
+            # Update the manifest path in the config directly
+            # FIX: This is the line that was causing the error
+            self.cfg.diarizer.manifest_filepath = manifest_path
+            
             # Run diarization
             logger.info(f"Running NeMo diarization on {audio_file_path}")
             self.diarizer.diarize()
