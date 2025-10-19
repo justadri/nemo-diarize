@@ -6,13 +6,7 @@ import tempfile
 
 logger = logging.getLogger(__name__)
 
-# Try to import ffmpeg, but provide fallback
-try:
-    import ffmpeg
-    FFMPEG_PYTHON_AVAILABLE = True
-except ImportError:
-    FFMPEG_PYTHON_AVAILABLE = False
-    logger.warning("ffmpeg-python not available, using subprocess fallback")
+import ffmpeg
 
 class AudioPreprocessor:
     """Class for preprocessing audio using FFmpeg with specialized profiles."""
@@ -81,7 +75,8 @@ class AudioPreprocessor:
             logger.info("FFmpeg is available.")
         except (subprocess.SubprocessError, FileNotFoundError):
             self.ffmpeg_available = False
-            logger.warning("FFmpeg not found. Audio preprocessing will not work.")
+            logger.error("FFmpeg not found. Audio preprocessing will not work.")
+            raise EnvironmentError("FFmpeg not found. Please install FFmpeg to use AudioPreprocessor.")
     
     def get_available_profiles(self):
         """
@@ -110,10 +105,7 @@ class AudioPreprocessor:
             return None, None
         
         # Use the appropriate method based on availability
-        if FFMPEG_PYTHON_AVAILABLE:
-            return self._preprocess_with_ffmpeg_python(input_file, profile_name, custom_filters)
-        else:
-            return self._preprocess_with_subprocess(input_file, profile_name, custom_filters)
+        return self._preprocess_with_ffmpeg_python(input_file, profile_name, custom_filters)
     
     def _preprocess_with_ffmpeg_python(self, input_file, profile_name="standard", custom_filters=None):
         """Implementation using ffmpeg-python."""
@@ -154,15 +146,27 @@ class AudioPreprocessor:
                 bp_settings = profile["filters"]["bandpass"]
                 freq = bp_settings.get("frequency", 300)
                 width = bp_settings.get("width", 3400)
-                filter_chain.append(f"bandpass=f={freq}:width_type=h:w={width}")
+                filter_chain.append({"name": "bandpass", "args": { "f": freq, "width_type": "h", "w": width }})
+                # filter_chain.append(f"bandpass=f={freq}:width_type=h:w={width}")
                 logger.info(f"Applied bandpass filter ({freq}Hz-{freq+width}Hz)")
             
             # High-pass filter to remove low rumble
             if "highpass" in profile["filters"] and profile["filters"]["highpass"]["enabled"]:
                 hp_settings = profile["filters"]["highpass"]
                 freq = hp_settings.get("frequency", 80)
-                filter_chain.append(f"highpass=f={freq}")
+                filter_chain.append({"name": "highpass", "args": { "f": freq }})
+                # filter_chain.append(f"highpass=f={freq}")
                 logger.info(f"Applied high-pass filter ({freq}Hz)")
+                
+            # Equalizer filter
+            if "equalizer" in profile["filters"] and profile["filters"]["equalizer"]["enabled"]:
+                eq_settings = profile["filters"]["equalizer"]
+                freq = eq_settings.get("frequency", 1000)
+                width = eq_settings.get("width", 100)
+                gain = eq_settings.get("gain", 0)
+                filter_chain.append({"name": "equalizer", "args": { "f": freq, "w": width, "g": gain }})
+                # filter_chain.append(f"equalizer=f={freq}:w={width}:g={gain}")
+                logger.info(f"Applied equalizer filter ({freq}Hz, {width}Hz, {gain}dB)")
             
             # Noise reduction
             if "noise_reduction" in profile["filters"] and profile["filters"]["noise_reduction"]["enabled"]:
@@ -170,7 +174,8 @@ class AudioPreprocessor:
                 strength = nr_settings.get("strength", 0.3)
                 smoothing = nr_settings.get("smoothing", 0.95)
                 # Use a more compatible filter for testing
-                filter_chain.append(f"afftdn=nr=10:nf=-20")
+                filter_chain.append({"name": "anlmdn", "args": { "strength": int(strength * 100000), "smooth": int(smoothing * 10000) }})
+                # filter_chain.append(f"afftdn=nr=10:nf=-20")
                 logger.info(f"Applied noise reduction filter")
             
             # FFT-based noise reduction (for very noisy recordings)
@@ -178,8 +183,20 @@ class AudioPreprocessor:
                 fft_settings = profile["filters"]["afftdn"]
                 nr = fft_settings.get("noise_reduction", 12)
                 nf = fft_settings.get("noise_floor", -50)
-                filter_chain.append(f"afftdn=nr={nr}:nf={nf}")
+                filter_chain.append({"name": "afftdn", "args": { "nr": nr, "nf": nf }})
+                # filter_chain.append(f"afftdn=nr={nr}:nf={nf}")
                 logger.info(f"Applied FFT-based noise reduction")
+                
+            # Dynamic range compression
+            if "compand" in profile["filters"] and profile["filters"]["compand"]["enabled"]:
+                comp_settings = profile["filters"]["compand"]
+                attack = comp_settings.get("attack", 0.02)
+                decay = comp_settings.get("decay", 0.2)
+                soft_knee = comp_settings.get("soft_knee", 6)
+                gain = comp_settings.get("gain", 5)
+                filter_chain.append({"name": "compand", "args": { "attacks": attack, "decays": decay, "soft-knee": soft_knee, "gain": gain }})
+                # filter_chain.append(f"compand=attack={attack}:decay={decay}:soft_knee={soft_knee}:gain={gain}")
+                logger.info(f"Applied dynamic range compression")
             
             # Audio normalization
             if "loudnorm" in profile["filters"] and profile["filters"]["loudnorm"]["enabled"]:
@@ -187,14 +204,15 @@ class AudioPreprocessor:
                 target_i = ln_settings.get("target_i", -23)
                 lra = ln_settings.get("lra", 7)
                 tp = ln_settings.get("tp", -2)
-                filter_chain.append(f"loudnorm=I={target_i}:LRA={lra}:TP={tp}")
+                filter_chain.append({"name": "loudnorm", "args": { "I": target_i, "LRA": lra, "TP": tp }})  
+                # filter_chain.append(f"loudnorm=I={target_i}:LRA={lra}:TP={tp}")
                 logger.info(f"Applied loudness normalization")
             
             # Apply all filters if any were specified
             if filter_chain:
                 try:
-                    filter_string = ','.join(filter_chain)
-                    stream = stream.filter(filter_string)
+                    for filter in filter_chain:
+                        stream = stream.filter(filter_name=filter["name"], **filter["args"])
                 except Exception as e:
                     logger.error(f"Failed to apply filters: {str(e)}")
                     # Fall back to no filters
@@ -202,16 +220,16 @@ class AudioPreprocessor:
             
             # Set output format to 16kHz mono WAV
             try:
-                stream = stream.output('pipe:', format='wav', acodec='pcm_s16le', ac=1, ar=16000)
+                stream = stream.output('pipe:', format='wav', acodec='pcm_s16le', ac=1, ar=16000, hide_banner=None, loglevel="error")
             except Exception as e:
                 logger.error(f"Failed to set output format: {str(e)}")
                 return None, None
             
             # Run the ffmpeg process and capture output
             try:
-                # Print the FFmpeg command for debugging
-                cmd = ffmpeg.compile(stream)
-                logger.info(f"FFmpeg command: {' '.join(cmd)}")
+                # # Print the FFmpeg command for debugging
+                # cmd = ffmpeg.compile(stream)
+                # logger.info(f"FFmpeg command: {' '.join(cmd)}")
                 
                 out, err = stream.run(capture_stdout=True, capture_stderr=True, quiet=True)
                 
@@ -247,24 +265,6 @@ class AudioPreprocessor:
             logger.error(f"Error preprocessing audio: {str(e)}")
             # Try fallback to simple conversion
             return self.preprocess_audio_simple(input_file)
-    
-    def _preprocess_with_subprocess(self, input_file, profile_name="standard", custom_filters=None):
-        """Fallback implementation using subprocess directly."""
-        try:
-            logger.info(f"Preprocessing audio with subprocess: {input_file}")
-            
-            # Verify the input file exists
-            abs_path = os.path.abspath(input_file)
-            if not os.path.exists(abs_path):
-                logger.error(f"Input file does not exist: {abs_path}")
-                return None, None
-            
-            # For simplicity, just do basic conversion in subprocess mode
-            return self.preprocess_audio_simple(input_file)
-            
-        except Exception as e:
-            logger.error(f"Error preprocessing audio with subprocess: {str(e)}")
-            return None, None
     
     def preprocess_audio_simple(self, input_file):
         """

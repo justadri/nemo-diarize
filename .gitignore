@@ -15,4 +15,6 @@ combined_results/*
 onelogger.*
 recordings/
 transcription_results/*
+diarization_results/*
+temp/*
 

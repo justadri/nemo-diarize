@@ -35,7 +35,7 @@ class NemoProcessor:
                 "soft_label_thres": 0.5,
                 "emb_batch_size": 0,
                 "diarizer": {
-                    # "manifest_filepath": "./models/manifest.json",
+                    "manifest_filepath": "./temp/manifest.json",
                     "out_dir": "./diarization_results",
                     "speaker_embeddings": {
                         "model_path": "titanet_large",
@@ -96,10 +96,10 @@ class NemoProcessor:
                 "rttm_filepath": None,
                 "uem_filepath": None
             }
-            
-            manifest_path = "manifest.json"
+
+            manifest_path = "./temp/manifest.json"
             with open(manifest_path, "w") as f:
-                f.write(json.dumps(manifest))
+                json.dump(manifest, f, indent=2)
             
             logger.info(f"Created manifest file for {audio_file_path}")
             return manifest_path
@@ -170,4 +170,5 @@ class NemoProcessor:
             
         except Exception as e:
             logger.error(f"Error processing file with NeMo: {str(e)}")
+            raise e
             return False, None
