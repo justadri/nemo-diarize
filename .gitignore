@@ -12,3 +12,4 @@ wheels/
 combined_results/*
 .DS_Store
 ._*
+onelogger.*

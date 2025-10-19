@@ -37,6 +37,7 @@ class NemoProcessor:
                         "parameters": {
                             "window_length_in_sec": 1.5,
                             "shift_length_in_sec": 0.75,
+                            "multiscale_weights": None,
                             "save_embeddings": False
                         }
                     },
