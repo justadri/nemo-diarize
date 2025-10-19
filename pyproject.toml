@@ -22,7 +22,7 @@ dependencies = [
     "nemo-toolkit",
     "numpy>=2.2.6",
     "nv-one-logger-pytorch-lightning-integration",
-    "nvidia-modelopt>=0.37.0",
+    "nvidia-modelopt[hf]>=0.37.0",
     "packaging>=25.0",
     "psutil>=7.1.0",
     "torch>=2.8.0",

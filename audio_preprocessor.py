@@ -16,7 +16,7 @@ class AudioPreprocessor:
         "standard": {
             "description": "General purpose profile with balanced settings",
             "filters": {
-                "noise_reduction": {"enabled": True, "strength": 0.3, "smoothing": 0.95},
+                "noise_reduction": {"enabled": True, "strength": 0.1, "smoothing": 0.1},
                 "highpass": {"enabled": True, "frequency": 80},
                 "loudnorm": {"enabled": True, "target_i": -23, "lra": 7, "tp": -2}
             }
@@ -25,7 +25,7 @@ class AudioPreprocessor:
             "description": "Optimized for telephone calls with narrow frequency range and compression",
             "filters": {
                 "bandpass": {"enabled": True, "frequency": 300, "width": 3400},
-                "noise_reduction": {"enabled": True, "strength": 0.4, "smoothing": 0.9},
+                "noise_reduction": {"enabled": True, "strength": 0.2, "smoothing": 0.1},
                 "compand": {"enabled": True, "attack": 0.02, "decay": 0.2, "soft_knee": 6, "gain": 5},
                 "highpass": {"enabled": False},
                 "loudnorm": {"enabled": True, "target_i": -18, "lra": 5, "tp": -1.5}
@@ -34,7 +34,7 @@ class AudioPreprocessor:
         "noisy": {
             "description": "Enhanced noise reduction for recordings with significant background noise",
             "filters": {
-                "noise_reduction": {"enabled": True, "strength": 0.6, "smoothing": 0.85},
+                "noise_reduction": {"enabled": True, "strength": 0.3, "smoothing": 0.05},
                 "highpass": {"enabled": True, "frequency": 100},
                 "afftdn": {"enabled": True, "noise_reduction": 12, "noise_floor": -50},
                 "loudnorm": {"enabled": True, "target_i": -23, "lra": 5, "tp": -2},
@@ -45,7 +45,7 @@ class AudioPreprocessor:
             "description": "Custom profile for extremely poor quality telephone audio",
             "filters": {
                 "bandpass": {"enabled": True, "frequency": 250, "width": 3500},  # Wider band for more natural sound
-                "noise_reduction": {"enabled": True, "strength": 0.5, "smoothing": 0.85},  # Stronger noise reduction
+                "noise_reduction": {"enabled": True, "strength": 0.4, "smoothing": 0.05},  # Stronger noise reduction
                 "compand": {"enabled": True, "attack": 0.01, "decay": 0.15, "soft_knee": 8, "gain": 7},  # More aggressive compression
                 "equalizer": {"enabled": True, "frequency": 2500, "width": 1.5, "gain": 5},  # Enhance clarity
                 "loudnorm": {"enabled": True, "target_i": -16, "lra": 4, "tp": -1.5}  # Even louder normalization
@@ -54,8 +54,8 @@ class AudioPreprocessor:
         "extreme_noise": {
             "description": "Custom profile for extremely noisy audio recordings",
             "filters": {
-                "noise_reduction": {"enabled": True, "strength": 0.7, "smoothing": 0.8},  # Maximum noise reduction
-                "afftdn": {"enabled": True, "noise_reduction": 15, "noise_floor": -60},  # More aggressive FFT denoising
+                "noise_reduction": {"enabled": True, "strength": 0.5, "smoothing": 0.04},  # Maximum noise reduction
+                "afftdn": {"enabled": True, "noise_reduction": 15, "noise_floor": -60},  # More aggressive FFT-based noise reduction
                 "highpass": {"enabled": True, "frequency": 120},  # Higher cutoff to remove more rumble
                 "equalizer": {"enabled": True, "frequency": 1500, "width": 2, "gain": 6},  # Stronger speech enhancement
                 "loudnorm": {"enabled": True, "target_i": -20, "lra": 4, "tp": -2}  # Tighter dynamic range
@@ -174,7 +174,7 @@ class AudioPreprocessor:
                 strength = nr_settings.get("strength", 0.3)
                 smoothing = nr_settings.get("smoothing", 0.95)
                 # Use a more compatible filter for testing
-                filter_chain.append({"name": "anlmdn", "args": { "strength": int(strength * 100000), "smooth": int(smoothing * 10000) }})
+                filter_chain.append({"name": "anlmdn", "args": { "strength": int(strength * 10000), "smooth": int(smoothing * 1000) }})
                 # filter_chain.append(f"afftdn=nr=10:nf=-20")
                 logger.info(f"Applied noise reduction filter")
             

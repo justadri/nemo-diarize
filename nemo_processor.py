@@ -27,16 +27,31 @@ class NemoProcessor:
             # Determine device
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
             
+            # Create temp directory if it doesn't exist
+            temp_dir = "./temp"
+            os.makedirs(temp_dir, exist_ok=True)
+            
+            # Create output directory if it doesn't exist
+            out_dir = "./diarization_results"
+            os.makedirs(out_dir, exist_ok=True)
+            
+            # Create a temporary manifest file to ensure it exists
+            manifest_path = os.path.join(temp_dir, "manifest.json")
+            with open(manifest_path, "w") as f:
+                f.write("[]")  # Write an empty JSON array as a placeholder
+            
             # Create the config for the diarizer
             cfg_dict = {
-                "num_workers": 4,
+                "num_workers": 0,
                 "max_num_of_spks": 8,
                 "scale_n": 5,
                 "soft_label_thres": 0.5,
                 "emb_batch_size": 0,
+                "sample_rate": 16000,
+                "verbose": True,
                 "diarizer": {
-                    "manifest_filepath": "./temp/manifest.json",
-                    "out_dir": "./diarization_results",
+                    "manifest_filepath": manifest_path,
+                    "out_dir": out_dir,
                     "speaker_embeddings": {
                         "model_path": "titanet_large",
                         "parameters": {
@@ -60,7 +75,16 @@ class NemoProcessor:
                         "parameters": {
                             "window_length_in_sec": 0.15,
                             "shift_length_in_sec": 0.01,
-                            "threshold": 0.5
+                            "threshold": 0.5,
+                            "smoothing": "median", # False or type of smoothing method (eg: median)
+                            "overlap": 0.25,
+                            "onset": 0.4, # Onset threshold for detecting the beginning and end of a speech
+                            "offset": 0.7, # Offset threshold for detecting the end of a speech
+                            "pad_onset": 0.05, # Adding durations before each speech segment
+                            "pad_offset": -0.1, # Adding durations after each speech segment
+                            "min_duration_on": 0.2, # Threshold for short speech segment deletion
+                            "min_duration_off": 0.2, # Threshold for small non_speech deletion
+                            "filter_speech_first": True
                         }
                     },
                     "oracle_vad": False,
@@ -85,7 +109,11 @@ class NemoProcessor:
     def create_manifest(self, audio_file_path, duration):
         """Create a manifest file for the audio file."""
         try:
-            # Create manifest file
+            # Create temp directory if it doesn't exist
+            temp_dir = "./temp"
+            os.makedirs(temp_dir, exist_ok=True)
+            
+            # Create manifest object
             manifest = {
                 "audio_filepath": os.path.abspath(audio_file_path),
                 "offset": 0,
@@ -97,11 +125,23 @@ class NemoProcessor:
                 "uem_filepath": None
             }
 
-            manifest_path = "./temp/manifest.json"
-            with open(manifest_path, "w") as f:
-                json.dump(manifest, f, indent=2)
+            manifest_path = os.path.join(temp_dir, "manifest.json")
             
-            logger.info(f"Created manifest file for {audio_file_path}")
+            # Write as JSONL (one JSON object per line)
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                f.write(json.dumps(manifest) + "\n")
+            
+            # Verify the file was written correctly
+            if not os.path.exists(manifest_path) or os.path.getsize(manifest_path) == 0:
+                logger.error(f"Failed to write manifest file or file is empty")
+                return None
+            
+            # Read back and log the exact content for debugging
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                content = f.read()
+                logger.info(f"Manifest file content: {content}")
+            
+            logger.info(f"Created valid manifest file for {audio_file_path}")
             return manifest_path
         except Exception as e:
             logger.error(f"Error creating manifest for {audio_file_path}: {str(e)}")
@@ -126,7 +166,8 @@ class NemoProcessor:
             
         try:
             # Create output directory if it doesn't exist
-            os.makedirs("./diarization_results", exist_ok=True)
+            out_dir = "./diarization_results"
+            os.makedirs(out_dir, exist_ok=True)
             
             # If preprocessed audio is provided, save it to a temporary file for NeMo
             temp_file = None
@@ -146,19 +187,36 @@ class NemoProcessor:
             # Create manifest for this audio file
             manifest_path = self.create_manifest(audio_file_path_for_nemo, duration)
             if not manifest_path:
+                logger.error("Failed to create manifest file")
                 return False, None
             
             # Update the manifest path in the config directly
-            # FIX: This is the line that was causing the error
             self.cfg.diarizer.manifest_filepath = manifest_path
             
             # Run diarization
             logger.info(f"Running NeMo diarization on {audio_file_path}")
+            
+            # Verify the manifest file exists and is valid before diarizing
+            if not os.path.exists(manifest_path):
+                logger.error(f"Manifest file {manifest_path} does not exist")
+                return False, None
+                
+            try:
+                with open(manifest_path, "r", encoding="utf-8") as f:
+                    manifest_content = f.read()
+                    logger.info(f"Manifest content before diarization: {manifest_content}")
+                    # Verify it's valid JSON
+                    json.loads(manifest_content)
+            except Exception as e:
+                logger.error(f"Error reading manifest before diarization: {str(e)}")
+                return False, None
+            
+            # Now run diarization
             self.diarizer.diarize()
             
             # The results are saved to the output directory specified in the config
             base_name = os.path.basename(audio_file_path).split('.')[0]
-            result_file = os.path.join("./diarization_results", f"{base_name}_diar_rttm.txt")
+            result_file = os.path.join(out_dir, f"{base_name}_diar_rttm.txt")
             
             # Check if the result file exists
             if os.path.exists(result_file):
