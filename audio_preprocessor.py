@@ -46,6 +46,26 @@ class AudioPreprocessor:
                 "loudnorm": {"enabled": True, "target_i": -23, "lra": 5, "tp": -2},
                 "equalizer": {"enabled": True, "frequency": 1000, "width": 1, "gain": 3}
             }
+        },
+        "extreme_telephone": {
+            "description": "Custom profile for extremely poor quality telephone audio",
+            "filters": {
+                "bandpass": {"enabled": True, "frequency": 250, "width": 3500},  # Wider band for more natural sound
+                "noise_reduction": {"enabled": True, "strength": 0.5, "smoothing": 0.85},  # Stronger noise reduction
+                "compand": {"enabled": True, "attack": 0.01, "decay": 0.15, "soft_knee": 8, "gain": 7},  # More aggressive compression
+                "equalizer": {"enabled": True, "frequency": 2500, "width": 1.5, "gain": 5},  # Enhance clarity
+                "loudnorm": {"enabled": True, "target_i": -16, "lra": 4, "tp": -1.5}  # Even louder normalization
+            }
+        },
+        "extreme_noise": {
+            "description": "Custom profile for extremely noisy audio recordings",
+            "filters": {
+                "noise_reduction": {"enabled": True, "strength": 0.7, "smoothing": 0.8},  # Maximum noise reduction
+                "afftdn": {"enabled": True, "noise_reduction": 15, "noise_floor": -60},  # More aggressive FFT denoising
+                "highpass": {"enabled": True, "frequency": 120},  # Higher cutoff to remove more rumble
+                "equalizer": {"enabled": True, "frequency": 1500, "width": 2, "gain": 6},  # Stronger speech enhancement
+                "loudnorm": {"enabled": True, "target_i": -20, "lra": 4, "tp": -2}  # Tighter dynamic range
+            }
         }
     }
     

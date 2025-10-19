@@ -94,7 +94,7 @@ def main():
         profile_name = "standard"
     
     # Get all audio files in the directory
-    audio_extensions = ['.wav', '.mp3', '.flac', '.ogg', '.m4a']
+    audio_extensions = ['.wav', '.mp3', '.flac', '.ogg', '.m4a', '.amr', '.wma', '.aac', '.aiff', '.alac', '.opus']
     audio_files = []
     
     for ext in audio_extensions:

@@ -29,8 +29,13 @@ class NemoProcessor:
             
             # Create the config for the diarizer
             cfg_dict = {
+                "num_workers": 4,
+                "max_num_of_spks": 8,
+                "scale_n": 5,
+                "soft_label_thres": 0.5,
+                "emb_batch_size": 0,
                 "diarizer": {
-                    "manifest_filepath": "manifest.json",
+                    # "manifest_filepath": "./models/manifest.json",
                     "out_dir": "./diarization_results",
                     "speaker_embeddings": {
                         "model_path": "titanet_large",

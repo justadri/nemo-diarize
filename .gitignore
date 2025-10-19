@@ -13,3 +13,6 @@ combined_results/*
 .DS_Store
 ._*
 onelogger.*
+recordings/
+transcription_results/*
+
