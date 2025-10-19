@@ -8,4 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+
 combined_results/*
+.DS_Store
+._*

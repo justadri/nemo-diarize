@@ -114,10 +114,10 @@ def main():
         # Step 1: Preprocess audio with selected profile
         audio_array, sample_rate = audio_preprocessor.preprocess_audio(audio_path, profile_name)
         
-        if audio_array is None:
-            logger.error(f"Failed to preprocess {audio_path}. Skipping.")
-            continue
-        
+        if audio_array is None or sample_rate is None:
+            logger.error(f"Failed to preprocess audio: {audio_path}")
+            raise Exception("Preprocessing failed")
+
         # Step 2: Process with NeMo for diarization
         nemo_success, nemo_file = nemo_processor.process_audio(audio_path, audio_array, sample_rate)
         

@@ -24,17 +24,14 @@ class TestMain(unittest.TestCase):
         audio = 0.5 * np.sin(2 * np.pi * 1000 * t)
         sf.write(self.test_audio_path, audio, sample_rate)
     
-    @patch('main.install_dependencies')
+    @patch('main.check_dependencies')
     @patch('main.AudioPreprocessor')
     @patch('main.WhisperXProcessor')
     @patch('main.NemoProcessor')
     @patch('main.ResultMerger')
     @patch('builtins.input')
-    def test_main_function(self, mock_input, mock_merger, mock_nemo, mock_whisperx, mock_preprocessor, mock_install):
+    def test_main_function(self, mock_input, mock_merger, mock_nemo, mock_whisperx, mock_preprocessor, mock_check):
         """Test the main function with mocked components."""
-        # Mock dependencies installation
-        mock_install.return_value = True
-        
         # Mock user input
         mock_input.side_effect = [
             self.test_dir,  # audio directory
@@ -71,7 +68,7 @@ class TestMain(unittest.TestCase):
         main.main()
         
         # Verify the function calls
-        mock_install.assert_called_once()
+        mock_check.assert_called_once()
         mock_preprocessor.assert_called_once()
         mock_whisperx.assert_called_once()
         mock_nemo.assert_called_once()
@@ -83,23 +80,23 @@ class TestMain(unittest.TestCase):
         mock_nemo_instance.process_audio.assert_called_once()
         mock_merger_instance.merge_results.assert_called_once()
     
-    @patch('main.install_dependencies')
-    def test_failed_dependencies(self, mock_install):
+    @patch('main.check_dependencies')
+    def test_failed_dependencies(self, mock_check):
         """Test handling of failed dependencies installation."""
-        mock_install.return_value = False
+        mock_check.return_value = False
         
         # Run the main function
         main.main()
         
         # Verify the function calls
-        mock_install.assert_called_once()
+        mock_check.assert_called_once()
     
-    @patch('main.install_dependencies')
+    @patch('main.check_dependencies')
     @patch('builtins.input')
-    def test_invalid_directory(self, mock_input, mock_install):
+    def test_invalid_directory(self, mock_input, mock_check):
         """Test handling of invalid audio directory."""
         # Mock dependencies installation
-        mock_install.return_value = True
+        # mock_check.return_value = True
         
         # Mock user input
         mock_input.return_value = "nonexistent_directory"
@@ -108,5 +105,5 @@ class TestMain(unittest.TestCase):
         main.main()
         
         # Verify the function calls
-        mock_install.assert_called_once()
+        mock_check.assert_called_once()
         mock_input.assert_called_once()
