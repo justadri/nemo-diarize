@@ -1,4 +1,14 @@
-# filename: test_whisperx_processor.py
+
+# BEGIN: user added these matplotlib lines to ensure any plots do not pop-up in their UI
+import matplotlib
+matplotlib.use('Agg')  # Set the backend to non-interactive
+import matplotlib.pyplot as plt
+plt.ioff()
+import os
+os.environ['TERM'] = 'dumb'
+# END: user added these matplotlib lines to ensure any plots do not pop-up in their UI
+# filename: fixed_test_whisperx_processor.py
+# execution: true
 
 import unittest
 import os
@@ -6,6 +16,14 @@ import numpy as np
 import tempfile
 import soundfile as sf
 from unittest.mock import patch, MagicMock
+import json
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Import the processor to test
 from whisperx_processor import WhisperXProcessor
 
 class TestWhisperXProcessor(unittest.TestCase):
@@ -15,63 +33,77 @@ class TestWhisperXProcessor(unittest.TestCase):
         """Set up test fixtures."""
         self.processor = WhisperXProcessor()
         
-        # Create a simple test audio file with unique name
-        self.test_dir = tempfile.mkdtemp()
+        # Create a unique test directory name but don't create the directory
+        self.test_dir = f"test_dir_{id(self)}"
         self.test_filename = f"test_audio_{id(self)}.wav"
         self.test_audio_path = os.path.join(self.test_dir, self.test_filename)
         
-        sample_rate = 16000
-        duration = 3  # seconds
-        t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
-        audio = 0.5 * np.sin(2 * np.pi * 1000 * t)
-        sf.write(self.test_audio_path, audio, sample_rate)
+        # Use in-memory audio data instead of writing to disk
+        self.sample_rate = 16000
+        self.duration = 3  # seconds
+        t = np.linspace(0, self.duration, int(self.sample_rate * self.duration), endpoint=False)
+        self.audio_data = 0.5 * np.sin(2 * np.pi * 1000 * t)
         
-        # Create test directories
+        # Create output directory
         os.makedirs("./transcription_results", exist_ok=True)
     
-    @patch('whisperx_processor.WhisperXProcessor.process_audio')
-    def test_process_audio_with_file(self, mock_process):
-        """Test processing with audio file path."""
-        mock_process.return_value = (True, "output_file.json")
+    @patch('whisperx_processor.whisperx')
+    @patch('whisperx_processor.DiarizationPipeline')
+    def test_process_audio_with_mocks(self, mock_diarize_pipeline_class, mock_whisperx):
+        """Test processing audio with properly configured mocks."""
+        # Create a sample audio array
+        audio_array = np.zeros(16000)  # 1 second of silence
         
-        success, output_file = self.processor.process_audio(self.test_audio_path)
+        # Mock the load_audio function
+        mock_whisperx.load_audio.return_value = audio_array
         
-        mock_process.assert_called_once()
-        self.assertTrue(success)
-        self.assertEqual(output_file, "output_file.json")
-    
-    @patch('whisperx.load_model')
-    @patch('whisperx.load_align_model')
-    @patch('whisperx.DiarizationPipeline')
-    @patch('whisperx.assign_word_speakers')
-    def test_mocked_whisperx_pipeline(self, mock_assign, mock_diarize, mock_align, mock_load):
-        """Test the WhisperX pipeline with mocks."""
-        # Mock the WhisperX model
+        # Mock the transcription model
         mock_model = MagicMock()
         mock_model.transcribe.return_value = {
             "segments": [
-                {"start": 0.0, "end": 1.0, "text": "Hello world"}
+                {"start": 0.0, "end": 1.0, "text": "Hello world", "id": 0}
             ]
         }
-        mock_load.return_value = mock_model
+        mock_whisperx.load_model.return_value = mock_model
         
-        # Mock the alignment model
+        # Mock the alignment model and result
         mock_align_model = MagicMock()
         mock_metadata = MagicMock()
-        mock_align.return_value = (mock_align_model, mock_metadata)
+        mock_whisperx.load_align_model.return_value = (mock_align_model, mock_metadata)
         
-        # Mock the diarization pipeline
-        mock_diarize_model = MagicMock()
-        mock_diarize_model.return_value = {"segments": []}
-        mock_diarize.return_value = mock_diarize_model
-        
-        # Mock the word speaker assignment
-        mock_assign.return_value = {
+        # Mock the align function to return a valid structure
+        mock_whisperx.align.return_value = {
             "segments": [
                 {
                     "start": 0.0,
                     "end": 1.0,
                     "text": "Hello world",
+                    "id": 0,
+                    "words": [
+                        {"word": "Hello", "start": 0.0, "end": 0.5},
+                        {"word": "world", "start": 0.5, "end": 1.0}
+                    ]
+                }
+            ]
+        }
+        
+        # Mock the diarization pipeline instance
+        mock_diarize_instance = MagicMock()
+        mock_diarize_instance.return_value = {
+            "segments": [
+                {"speaker": "SPEAKER_00", "start": 0.0, "end": 1.0}
+            ]
+        }
+        mock_diarize_pipeline_class.return_value = mock_diarize_instance
+        
+        # Mock the assign_word_speakers function
+        mock_whisperx.assign_word_speakers.return_value = {
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 1.0,
+                    "text": "Hello world",
+                    "id": 0,
                     "words": [
                         {"word": "Hello", "start": 0.0, "end": 0.5, "speaker": "SPEAKER_00"},
                         {"word": "world", "start": 0.5, "end": 1.0, "speaker": "SPEAKER_00"}
@@ -80,18 +112,28 @@ class TestWhisperXProcessor(unittest.TestCase):
             ]
         }
         
-        # Create a test audio array
-        audio_array = np.zeros(16000)  # 1 second of silence at 16kHz
-        
-        # Process the audio
-        with patch('builtins.open', unittest.mock.mock_open()):
-            success, _ = self.processor.process_audio(
-                self.test_audio_path, audio_array=audio_array
+        # Mock open function for file writing
+        with patch('builtins.open', unittest.mock.mock_open()) as mock_open: # type: ignore
+            # Process the audio - use the audio array directly instead of a file path
+            success, output_file = self.processor.process_audio(
+                "dummy_path.wav", audio_array=audio_array
             )
-        
-        self.assertTrue(success)
-        mock_load.assert_called_once()
-        mock_model.transcribe.assert_called_once()
-        mock_align.assert_called_once()
-        mock_diarize.assert_called_once()
-        mock_assign.assert_called_once()
+            
+            # Check results
+            self.assertTrue(success)
+            self.assertIsNotNone(output_file)
+            
+            # Verify function calls
+            mock_whisperx.load_model.assert_called_once()
+            mock_model.transcribe.assert_called_once()
+            mock_whisperx.load_align_model.assert_called_once()
+            mock_whisperx.align.assert_called_once()
+            mock_whisperx.assign_word_speakers.assert_called_once()
+            
+            # Verify diarization pipeline was called correctly
+            mock_diarize_pipeline_class.assert_called_once()
+            mock_diarize_instance.assert_called_once()
+
+# Run the test if this file is executed directly
+if __name__ == "__main__":
+    unittest.main()
