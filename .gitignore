@@ -19,5 +19,4 @@ diarization_results/*
 temp/*
 
 models/*
-nemo_results/*
-whisperx_results/*
+output/*

@@ -10,7 +10,7 @@ import numpy as np
 
 
 logger = logging.getLogger(__name__)
-OUT_DIR = "./whisperx_results"
+OUT_DIR = "./output/whisperx"
 
 # Import DiarizationPipeline conditionally to handle testing scenarios
 DiarizationPipeline:Any = None
@@ -30,6 +30,7 @@ class WhisperXProcessor:
         """Initialize the WhisperX processor."""
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.compute_type = "float16" if torch.cuda.is_available() else "int8"
+        os.environ['PYANNOTE_CACHE'] = os.path.abspath('./models')
     
     def process_audio(self, audio_file_path, audio_array=None, language="en"):
         """
@@ -84,7 +85,7 @@ class WhisperXProcessor:
             model_a, metadata = whisperx.load_align_model(language_code=language, 
                                                           device=self.device,
                                                           model_name='SrihariGKS/wav2vec-asr-fine-tuned-english-3',
-                                                          cache_dir='./models')
+                                                          model_dir='./models')
             
             # Add error handling for align model
             if hasattr(model_a, "__class__") and hasattr(model_a.__class__, "__name__"):
@@ -101,14 +102,16 @@ class WhisperXProcessor:
 
             # 3. Assign speaker labels
             diarize_model = DiarizationPipeline(use_auth_token=os.getenv('HUGGINGFACE_TOKEN'),
-                                                device=self.device,
-                                                cache_dir='./models')
+                                                device=self.device)
             
+            logger.info("WhisperX diarization model loaded, starting diarization...")
             diarize_segments = diarize_model(audio, min_speakers=1, max_speakers=8)
             
+            logger.info("WhisperX diarization completerd, assigning word speakers ...")
             # 4. Assign speaker to words
             result = whisperx.assign_word_speakers(diarize_segments, result)
             
+            logger.info("WhisperX completed successfully, saving results...")
             # Save the results
             base_name = os.path.splitext(os.path.basename(audio_file_path))[0]
             output_file = os.path.join(OUT_DIR, f"{base_name}_transcript.json")
@@ -130,12 +133,12 @@ class WhisperXProcessor:
                         f.write(f"[Speaker {segment['speaker']}]: {segment['text']}\n")
             
             # Clean up GPU memory
-            del model, model_a
-            if diarize_model is not None and not is_mock:
-                del diarize_model
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            # del model, model_a
+            # if diarize_model is not None and not is_mock:
+            #     del diarize_model
+            # gc.collect()
+            # if torch.cuda.is_available():
+            #     torch.cuda.empty_cache()
             
             logger.info(f"WhisperX processing completed. Results saved to {output_file} and {readable_output}")
             return True, output_file, raw_text

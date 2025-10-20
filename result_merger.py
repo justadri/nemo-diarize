@@ -1,12 +1,3 @@
-
-# BEGIN: user added these matplotlib lines to ensure any plots do not pop-up in their UI
-import matplotlib
-matplotlib.use('Agg')  # Set the backend to non-interactive
-import matplotlib.pyplot as plt
-plt.ioff()
-import os
-os.environ['TERM'] = 'dumb'
-# END: user added these matplotlib lines to ensure any plots do not pop-up in their UI
 # filename: result_merger.py
 
 import os
@@ -14,6 +5,8 @@ import json
 import logging
 
 logger = logging.getLogger(__name__)
+
+OUT_DIR = './output/combined'
 
 class ResultMerger:
     """Class for merging results from WhisperX and NeMo."""
@@ -37,7 +30,7 @@ class ResultMerger:
         """
         try:
             # Create output directory if it doesn't exist
-            os.makedirs("./combined_results", exist_ok=True)
+            os.makedirs(OUT_DIR, exist_ok=True)
             
             if not os.path.exists(nemo_file) or not os.path.exists(whisperx_file):
                 logger.warning(f"Missing NeMo or WhisperX results for {audio_file_path}")
@@ -69,7 +62,7 @@ class ResultMerger:
             
             # Create a combined output
             base_name = os.path.basename(audio_file_path).split('.')[0]
-            output_file = os.path.join("./combined_results", f"{base_name}_combined.txt")
+            output_file = os.path.join(OUT_DIR, f"{base_name}_combined.txt")
             
             with open(output_file, 'w') as f:
                 f.write(f"Combined diarization and transcription for {audio_file_path}\n")

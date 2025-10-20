@@ -11,7 +11,7 @@ from nemo.collections.asr.parts.utils.diarization_utils import OfflineDiarWithAS
 from nemo.core.config import hydra_runner
 
 logger = logging.getLogger(__name__)
-OUT_DIR = "./nemo_results"
+OUT_DIR = "./output/nemo"
 
 class NemoProcessor:
     """Class for processing audio with NeMo diarization."""

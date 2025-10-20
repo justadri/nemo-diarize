@@ -1,12 +1,3 @@
-
-# BEGIN: user added these matplotlib lines to ensure any plots do not pop-up in their UI
-import matplotlib
-matplotlib.use('Agg')  # Set the backend to non-interactive
-import matplotlib.pyplot as plt
-plt.ioff()
-import os
-os.environ['TERM'] = 'dumb'
-# END: user added these matplotlib lines to ensure any plots do not pop-up in their UI
 # filename: utils.py
 
 import os
@@ -16,6 +7,7 @@ import soundfile as sf
 
 logger = logging.getLogger(__name__)
 
+# this can probably be deleted
 def save_audio_to_temp(audio_array, sample_rate):
     """
     Save audio array to a temporary file.
@@ -38,6 +30,7 @@ def save_audio_to_temp(audio_array, sample_rate):
         logger.error(f"Error saving audio to temp file: {str(e)}")
         return None
 
+# shouid use or delte this too
 def format_timestamp(seconds):
     """
     Format seconds into a readable timestamp.
