@@ -132,7 +132,7 @@ def main():
             else:
                 logger.warning(f"Failed to merge results for {audio_path}")
         else:
-            logger.warning(f"Failed to process {audio_path} with either NeMo or WhisperX")
+            logger.warning(f"Failed to process {audio_path} with {'NeMo' if not nemo_success else ''}  {'WhisperX' if not whisperx_success else ''}")
     
     logger.info("All files processed. Results are in the ./diarization_results, ./transcription_results, and ./combined_results directories.")
 

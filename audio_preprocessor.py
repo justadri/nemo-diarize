@@ -1,12 +1,13 @@
 import os
+import sys
 import logging
 import numpy as np
 import subprocess
-import tempfile
+import re
+import ffmpeg
 
 logger = logging.getLogger(__name__)
 
-import ffmpeg
 
 class AudioPreprocessor:
     """Class for preprocessing audio using FFmpeg with specialized profiles."""
@@ -17,51 +18,60 @@ class AudioPreprocessor:
         "standard": {
             "description": "General purpose profile with balanced settings",
             "filters": {
-                "noise_reduction": {"enabled": True, "strength": 0.1, "smoothing": 10},
-                "highpass": {"enabled": True, "frequency": 80},
-                "loudnorm": {"enabled": True, "target_i": -23, "lra": 7, "tp": -2}
+                "highpass": {"frequency": 60},
+                "dynaudnorm": {"frame_length": 500, "gauss_size": 31, "peak": 0.95, "max_gain": 5.0}
+                # "noise_reduction": {"strength": 0.1, "smoothing": 10},
+                # "highpass": {"frequency": 80},
+                # "loudnorm": {"target_i": -23, "lra": 7, "tp": -2}
             }
         },
         "telephone": {
             "description": "Optimized for telephone calls with narrow frequency range and compression",
             "filters": {
-                "bandpass": {"enabled": True, "frequency": 300, "width": 3400},
-                "noise_reduction": {"enabled": True, "strength": 1, "smoothing": 15},
-                "compand": {"enabled": True, "attack": 0.02, "decay": 0.2, "soft_knee": 6, "gain": 5},
-                "highpass": {"enabled": False},
-                "loudnorm": {"enabled": True, "target_i": -18, "lra": 5, "tp": -1.5}
+                "volume_adapt": {"target_level": 0},
+                "bandpass": {"frequency": 2050, "width": 1950},
+                "equalizer": {
+                              "bands": [
+                                  {"frequency": 200, "width": 1, "gain": 2},
+                                  {"frequency": 1000, "width": 1, "gain": 3},
+                                  {"frequency": 3000, "width": 1, "gain": 2}
+                                ]
+                              },
+                "dynaudnorm": {"frame_length": 100, "gauss_size": 15, "peak": 0.95, "max_gain": 10.0},
+                "acompressor": {"threshold": 0.125, "ratio": 2, "attack": 75, "release": 400, "makeup": 4},
+                "alimiter": {"level_in": 0.9, "level_out": 0.9, "limit": 1.0, "attack": 5, "release": 50}
             }
         },
-        "noisy": {
-            "description": "Enhanced noise reduction for recordings with significant background noise",
-            "filters": {
-                "noise_reduction": {"enabled": True, "strength": 10, "smoothing": 20},
-                "highpass": {"enabled": True, "frequency": 100},
-                "afftdn": {"enabled": True, "noise_reduction": 12, "noise_floor": -50},
-                "loudnorm": {"enabled": True, "target_i": -23, "lra": 5, "tp": -2},
-                "equalizer": {"enabled": True, "frequency": 1000, "width": 1, "gain": 3}
-            }
-        },
-        "extreme_telephone": {
-            "description": "Custom profile for extremely poor quality telephone audio",
-            "filters": {
-                "bandpass": {"enabled": True, "frequency": 250, "width": 3500},  # Wider band for more natural sound
-                "noise_reduction": {"enabled": True, "strength": 100, "smoothing": 25},  # Stronger noise reduction
-                "compand": {"enabled": True, "attack": 0.01, "decay": 0.15, "soft_knee": 8, "gain": 7},  # More aggressive compression
-                "equalizer": {"enabled": True, "frequency": 2500, "width": 1.5, "gain": 5},  # Enhance clarity
-                "loudnorm": {"enabled": True, "target_i": -16, "lra": 4, "tp": -1.5}  # Even louder normalization
-            }
-        },
-        "extreme_noise": {
-            "description": "Custom profile for extremely noisy audio recordings",
-            "filters": {
-                "noise_reduction": {"enabled": True, "strength": 200, "smoothing": 30},  # Maximum noise reduction
-                "afftdn": {"enabled": True, "noise_reduction": 15, "noise_floor": -60},  # More aggressive FFT-based noise reduction
-                "highpass": {"enabled": True, "frequency": 120},  # Higher cutoff to remove more rumble
-                "equalizer": {"enabled": True, "frequency": 1500, "width": 2, "gain": 6},  # Stronger speech enhancement
-                "loudnorm": {"enabled": True, "target_i": -20, "lra": 4, "tp": -2}  # Tighter dynamic range
-            }
-        }
+        # "noisy": {
+        #     "description": "Enhanced noise reduction for recordings with significant background noise",
+        #     "filters": {
+        #         "noise_reduction": {"strength": 10, "smoothing": 20},
+        #         "highpass": {"frequency": 100},
+        #         "afftdn": {"noise_reduction": 12, "noise_floor": -50},
+        #         "loudnorm": {"target_i": -23, "lra": 5, "tp": -2},
+        #         "equalizer": {"frequency": 1000, "width": 1, "gain": 3}
+        #     }
+        # },
+        # "extreme_telephone": {
+        #     "description": "Custom profile for extremely poor quality telephone audio",
+        #     "filters": {
+        #         "bandpass": {"frequency": 250, "width": 3500},  # Wider band for more natural sound
+        #         "noise_reduction": {"strength": 100, "smoothing": 25},  # Stronger noise reduction
+        #         "compand": {"attack": 0.01, "decay": 0.15, "soft_knee": 8, "gain": 7},  # More aggressive compression
+        #         "equalizer": {"frequency": 2500, "width": 1.5, "gain": 5},  # Enhance clarity
+        #         "loudnorm": {"target_i": -16, "lra": 4, "tp": -1.5}  # Even louder normalization
+        #     }
+        # },
+        # "extreme_noise": {
+        #     "description": "Custom profile for extremely noisy audio recordings",
+        #     "filters": {
+        #         "noise_reduction": {"strength": 200, "smoothing": 30},  # Maximum noise reduction
+        #         "afftdn": {"noise_reduction": 15, "noise_floor": -60},  # More aggressive FFT-based noise reduction
+        #         "highpass": {"frequency": 120},  # Higher cutoff to remove more rumble
+        #         "equalizer": {"frequency": 1500, "width": 2, "gain": 6},  # Stronger speech enhancement
+        #         "loudnorm": {"target_i": -20, "lra": 4, "tp": -2}  # Tighter dynamic range
+        #     }
+        # }
     }
     
     def __init__(self):
@@ -142,35 +152,56 @@ class AudioPreprocessor:
             # Apply audio filters in sequence
             filter_chain = []
             
+            if "volume_adapt" in profile["filters"]:
+                logger.info("Applying volume adaptation filter")
+                logger.info("Analyzing volume levels...")
+                detected_max_volume = None
+                try:
+                    out, err = (
+                        ffmpeg.input(abs_path)
+                        .filter('volumedetect')
+                        .output('/dev/null', format='null')
+                        .run(quiet=True, capture_stderr=True, capture_stdout=True)
+                    )
+                    # Extract max_volume from stderr
+                    match = re.search(r'max_volume: ([-+]?\d*\.?\d+) dB', err.decode('utf-8'))
+                    detected_max_volume = float(match.group(1)) if match else None
+                except ffmpeg.Error as e:
+                    logger.error(f"Error analyzing volume levels: {str(e)}, {e.stderr.decode('utf-8')}")
+                
+                if detected_max_volume is not None:
+                    target_level = profile["filters"]["volume_adapt"].get("target_level", 0)
+                    volume_adjustment = target_level - detected_max_volume
+                    logger.info(f"Detected max volume: {detected_max_volume} dB, adjusting by {volume_adjustment} dB to reach target {target_level} dB")
+                    filter_chain.append({"name": "volume", "args": { "volume": f"{volume_adjustment}dB" }})
+                    
             # Bandpass filter (especially for telephone)
-            if "bandpass" in profile["filters"] and profile["filters"]["bandpass"]["enabled"]:
+            if "bandpass" in profile["filters"]:
                 bp_settings = profile["filters"]["bandpass"]
-                freq = bp_settings.get("frequency", 300)
-                width = bp_settings.get("width", 3400)
+                freq = bp_settings.get("frequency", 790)
+                width = bp_settings.get("width", 730)
                 filter_chain.append({"name": "bandpass", "args": { "f": freq, "width_type": "h", "w": width }})
-                # filter_chain.append(f"bandpass=f={freq}:width_type=h:w={width}")
                 logger.info(f"Applied bandpass filter ({freq}Hz-{freq+width}Hz)")
             
             # High-pass filter to remove low rumble
-            if "highpass" in profile["filters"] and profile["filters"]["highpass"]["enabled"]:
+            if "highpass" in profile["filters"]:
                 hp_settings = profile["filters"]["highpass"]
                 freq = hp_settings.get("frequency", 80)
                 filter_chain.append({"name": "highpass", "args": { "f": freq }})
-                # filter_chain.append(f"highpass=f={freq}")
                 logger.info(f"Applied high-pass filter ({freq}Hz)")
                 
             # Equalizer filter
-            if "equalizer" in profile["filters"] and profile["filters"]["equalizer"]["enabled"]:
+            if "equalizer" in profile["filters"]:
                 eq_settings = profile["filters"]["equalizer"]
-                freq = eq_settings.get("frequency", 1000)
-                width = eq_settings.get("width", 100)
-                gain = eq_settings.get("gain", 0)
-                filter_chain.append({"name": "equalizer", "args": { "f": freq, "w": width, "g": gain }})
-                # filter_chain.append(f"equalizer=f={freq}:w={width}:g={gain}")
-                logger.info(f"Applied equalizer filter ({freq}Hz, {width}Hz, {gain}dB)")
-            
+                for band in eq_settings.get("bands", []):
+                    freq = band.get("frequency", 1000)
+                    width = band.get("width", 100)
+                    gain = band.get("gain", 0)
+                    filter_chain.append({"name": "equalizer", "args": { "f": freq, "w": width, "g": gain }})
+                    logger.info(f"Applied equalizer band ({freq}Hz, {width}Hz, {gain}dB)")
+
             # Noise reduction
-            if "noise_reduction" in profile["filters"] and profile["filters"]["noise_reduction"]["enabled"]:
+            if "noise_reduction" in profile["filters"]:
                 nr_settings = profile["filters"]["noise_reduction"]
                 strength = nr_settings.get("strength", 100)
                 smoothing = nr_settings.get("smoothing", 1)
@@ -180,16 +211,41 @@ class AudioPreprocessor:
                 logger.info(f"Applied noise reduction filter")
             
             # FFT-based noise reduction (for very noisy recordings)
-            if "afftdn" in profile["filters"] and profile["filters"]["afftdn"]["enabled"]:
+            if "afftdn" in profile["filters"]:
                 fft_settings = profile["filters"]["afftdn"]
                 nr = fft_settings.get("noise_reduction", 12)
                 nf = fft_settings.get("noise_floor", -50)
                 filter_chain.append({"name": "afftdn", "args": { "nr": nr, "nf": nf }})
                 # filter_chain.append(f"afftdn=nr={nr}:nf={nf}")
                 logger.info(f"Applied FFT-based noise reduction")
+            
+            # Dynamic audio normalization
+            if "dynaudnorm" in profile["filters"]:
+                dan_settings = profile["filters"]["dynaudnorm"]
+                frame_length = dan_settings.get("frame_length", 500)
+                gauss_size = dan_settings.get("gauss_size", 31)
+                peak = dan_settings.get("peak", 0.95)
+                max_gain = dan_settings.get("max_gain", 5.0)
+                filter_chain.append({"name": "dynaudnorm", "args": {
+                    "framelen": frame_length, 
+                    "gausssize": gauss_size, 
+                    "peak": peak, 
+                    "maxgain": max_gain 
+                }})
+                logger.info(f"Applied dynamic audio normalization")
+
+            # Audio normalization
+            if "loudnorm" in profile["filters"]:
+                ln_settings = profile["filters"]["loudnorm"]
+                target_i = ln_settings.get("target_i", -23)
+                lra = ln_settings.get("lra", 7)
+                tp = ln_settings.get("tp", -2)
+                filter_chain.append({"name": "loudnorm", "args": { "I": target_i, "LRA": lra, "TP": tp }})  
+                # filter_chain.append(f"loudnorm=I={target_i}:LRA={lra}:TP={tp}")
+                logger.info(f"Applied loudness normalization")
                 
             # Dynamic range compression
-            if "compand" in profile["filters"] and profile["filters"]["compand"]["enabled"]:
+            if "compand" in profile["filters"]:
                 comp_settings = profile["filters"]["compand"]
                 attack = comp_settings.get("attack", 0.02)
                 decay = comp_settings.get("decay", 0.2)
@@ -199,15 +255,27 @@ class AudioPreprocessor:
                 # filter_chain.append(f"compand=attack={attack}:decay={decay}:soft_knee={soft_knee}:gain={gain}")
                 logger.info(f"Applied dynamic range compression")
             
-            # Audio normalization
-            if "loudnorm" in profile["filters"] and profile["filters"]["loudnorm"]["enabled"]:
-                ln_settings = profile["filters"]["loudnorm"]
-                target_i = ln_settings.get("target_i", -23)
-                lra = ln_settings.get("lra", 7)
-                tp = ln_settings.get("tp", -2)
-                filter_chain.append({"name": "loudnorm", "args": { "I": target_i, "LRA": lra, "TP": tp }})  
-                # filter_chain.append(f"loudnorm=I={target_i}:LRA={lra}:TP={tp}")
-                logger.info(f"Applied loudness normalization")
+            # compressor
+            if "acompressor" in profile["filters"]:
+                ac_settings = profile["filters"]["acompressor"]
+                threshold = ac_settings.get("threshold", 0.1)
+                ratio = ac_settings.get("ratio", 2)
+                attack = ac_settings.get("attack", 50)
+                release = ac_settings.get("release", 250)
+                makeup = ac_settings.get("makeup", 3)
+                filter_chain.append({"name": "acompressor", "args": { "threshold": threshold, "ratio": ratio, "attack": attack, "release": release, "makeup": makeup }})
+                logger.info(f"Applied audio compressor")
+                
+            # limiter
+            if "alimiter" in profile["filters"]:
+                al_settings = profile["filters"]["alimiter"]
+                level_in = al_settings.get("level_in", 0.9)
+                level_out = al_settings.get("level_out", 0.9)
+                limit = al_settings.get("limit", 1.0)
+                attack = al_settings.get("attack", 5)
+                release = al_settings.get("release", 50)
+                filter_chain.append({"name": "alimiter", "args": { "level_in": level_in, "level_out": level_out, "limit": limit, "attack": attack, "release": release }})
+                logger.info(f"Applied audio limiter")
             
             # Apply all filters if any were specified
             if filter_chain:
