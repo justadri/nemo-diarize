@@ -5,8 +5,13 @@ import logging
 import soundfile as sf
 import tempfile
 from omegaconf import OmegaConf
+from nemo.collections.asr.models import ClusteringDiarizer
+from nemo.collections.asr.parts.utils.decoder_timestamps_utils import ASRDecoderTimeStamps
+from nemo.collections.asr.parts.utils.diarization_utils import OfflineDiarWithASR
+from nemo.core.config import hydra_runner
 
 logger = logging.getLogger(__name__)
+OUT_DIR = "./nemo_results"
 
 class NemoProcessor:
     """Class for processing audio with NeMo diarization."""
@@ -14,118 +19,166 @@ class NemoProcessor:
     def __init__(self):
         """Initialize the NeMo processor."""
         # Store config separately from diarizer
-        self.cfg = None
-        self.diarizer = self.initialize_diarizer()
+        self.cfg = self.initialize_config()
     
-    def initialize_diarizer(self):
-        """Initialize the NeMo ClusteringDiarizer model."""
-        try:
-            from nemo.collections.asr.models import ClusteringDiarizer
-            
-            logger.info("Initializing NeMo ClusteringDiarizer model...")
-            
-            # Determine device
-            device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            
-            # Create temp directory if it doesn't exist
-            temp_dir = "./temp"
-            os.makedirs(temp_dir, exist_ok=True)
-            
-            # Create output directory if it doesn't exist
-            out_dir = "./diarization_results"
-            os.makedirs(out_dir, exist_ok=True)
-            
-            # Create a temporary manifest file to ensure it exists
-            manifest_path = os.path.join(temp_dir, "manifest.json")
-            with open(manifest_path, "w") as f:
-                f.write("[]")  # Write an empty JSON array as a placeholder
-            
-            # Create the config for the diarizer
-            cfg_dict = {
-                "num_workers": 0,
-                "max_num_of_spks": 8,
-                "scale_n": 5,
-                "soft_label_thres": 0.5,
-                "emb_batch_size": 0,
-                "sample_rate": 16000,
-                "verbose": True,
-                "diarizer": {
-                    "manifest_filepath": manifest_path,
-                    "out_dir": out_dir,
-                    "speaker_embeddings": {
-                        "model_path": "titanet_large",
-                        "parameters": {
-                            "window_length_in_sec": 1.5,
-                            "shift_length_in_sec": 0.75,
-                            "multiscale_weights": None,
-                            "save_embeddings": False
-                        }
-                    },
-                    "clustering": {
-                        "parameters": {
-                            "oracle_num_speakers": False,
-                            "max_num_speakers": 8,
-                            "enhanced_count_thres": 80,
-                            "max_rp_threshold": 0.25,
-                            "sparse_search_volume": 30
-                        }
-                    },
-                    "vad": {
-                        "model_path": "vad_multilingual_marblenet",
-                        "parameters": {
-                            "window_length_in_sec": 0.15,
-                            "shift_length_in_sec": 0.01,
-                            "threshold": 0.5,
-                            "smoothing": "median", # False or type of smoothing method (eg: median)
-                            "overlap": 0.25,
-                            "onset": 0.4, # Onset threshold for detecting the beginning and end of a speech
-                            "offset": 0.7, # Offset threshold for detecting the end of a speech
-                            "pad_onset": 0.05, # Adding durations before each speech segment
-                            "pad_offset": -0.1, # Adding durations after each speech segment
-                            "min_duration_on": 0.2, # Threshold for short speech segment deletion
-                            "min_duration_off": 0.2, # Threshold for small non_speech deletion
-                            "filter_speech_first": True
-                        }
-                    },
-                    "oracle_vad": False,
-                    "collar": 0.25,
-                    "ignore_overlap": False
+    def initialize_config(self):
+        """Initialize NeMo."""        
+        logger.info("Initializing NeMo...")
+        
+        # Determine device
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+        # Create output directory if it doesn't exist
+        os.makedirs(OUT_DIR, exist_ok=True)
+        
+        # Create a temporary manifest file to ensure it exists
+        manifest_path = os.path.join(OUT_DIR, "manifest.json")
+        with open(manifest_path, "w") as f:
+            f.write("[]")  # Write an empty JSON array as a placeholder
+        
+        # Create the config for the diarizer
+        path_to_arpa = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models', '4gram_big.arpa')
+        
+        cfg_dict = {
+            "name": "ClusterDiarizer",
+            "num_workers": 0,
+            "sample_rate": 16000,
+            "batch_size": 8,
+            "device": device,
+            "verbose": True,
+            # "max_num_of_spks": 8,
+            # "scale_n": 5,
+            # "soft_label_thres": 0.5,
+            # "emb_batch_size": 0,
+            "diarizer": {
+                "manifest_filepath": manifest_path,
+                "out_dir": OUT_DIR,
+                "oracle_vad": False,
+                "collar": 0.25,
+                "ignore_overlap": False,
+                "vad": {
+                    "model_path": "vad_multilingual_marblenet",
+                    "external_vad_manifest": None,
+                    "parameters": {
+                        "window_length_in_sec": 0.63,
+                        "shift_length_in_sec": 0.08,
+                        "smoothing": False, # False or type of smoothing method (eg: median)
+                        "overlap": 0.5,
+                        "onset": 0.5, # Onset threshold for detecting the beginning and end of a speech
+                        "offset": 0.3, # Offset threshold for detecting the end of a speech
+                        "pad_onset": 0.2, # Adding durations before each speech segment
+                        "pad_offset": 0.2, # Adding durations after each speech segment
+                        "min_duration_on": 0.2, # Threshold for short speech segment deletion
+                        "min_duration_off": 0.2, # Threshold for small non_speech deletion
+                        "filter_speech_first": True
+                        # "threshold": 0.5
+                    }
                 },
-                "device": device
+                "speaker_embeddings": {
+                    "model_path": "titanet_large",
+                    "parameters": {
+                        "window_length_in_sec": [1.9,1.2,0.5], # Window length(s) in sec (floating-point number). either a number or a list. ex) 1.5 or [1.5,1.0,0.5]
+                        "shift_length_in_sec": [0.95,0.6,0.25], # Shift length(s) in sec (floating-point number). either a number or a list. ex) 0.75 or [0.75,0.5,0.25]
+                        "multiscale_weights": [1,1,1], # Weight for each scale. should be null (for single scale) or a list matched with window/shift scale count. ex) [0.33,0.33,0.33]
+                        "save_embeddings": False # Save embeddings as pickle file for each audio input.
+                    }
+                },
+                "clustering": {
+                    "parameters": {
+                        "oracle_num_speakers": False, # If True, use num of speakers value provided in manifest file.
+                        "max_num_speakers": 8, # Max number of speakers for each recording. If an oracle number of speakers is passed, this value is ignored.
+                        "enhanced_count_thres": 80, # If the number of segments is lower than this number, enhanced speaker counting is activated.
+                        "max_rp_threshold": 0.25, # Determines the range of p-value search: 0 < p <= max_rp_threshold. 
+                        "sparse_search_volume": 10, # The higher the number, the more values will be examined with more time. 
+                        "maj_vote_spk_count": False,  # If True, take a majority vote on multiple p-values to estimate the number of speakers.
+                        "chunk_cluster_count": 50, # Number of forced clusters (overclustering) per unit chunk in long-form audio clustering.
+                        "embeddings_per_chunk": 10000 # Number of embeddings in each chunk for long-form audio clustering. Adjust based on GPU memory capacity. (default: 10000, approximately 40 mins of audio) 
+                    }
+                },
+                # "msdd_model": {
+                #     "model_path": "diar_msdd_telephonic",  # .nemo local model path or pretrained model name for multiscale diarization decoder (MSDD)
+                #     "parameters": {
+                #         "use_speaker_model_from_ckpt": True, # If True, use speaker embedding model in checkpoint. If False, the provided speaker embedding model in config will be used.
+                #         "infer_batch_size": 25, # Batch size for MSDD inference. 
+                #         "sigmoid_threshold": [0.7], # Sigmoid threseecd hold for generating binarized speaker labels. The smaller the more generous on detecting overlaps.
+                #         "seq_eval_mode": False, # If True, use oracle number of speaker and evaluate F1 score for the given speaker sequences. Default is False.
+                #         "split_infer": True, # If True, break the input audio clip to short sequences and calculate cluster average embeddings for inference.
+                #         "diar_window_length": 50, # The length of split short sequence when split_infer is True.
+                #         "overlap_infer_spk_limit": 5 # If the estimated number of speakers are larger than this number, overlap speech is not estimated.
+                #     }
+                # },
+                "asr": {
+                    "model_path": "stt_en_citrinet_1024", # Provide NGC cloud ASR model name. stt_en_conformer_ctc_* models are recommended for diarization purposes.
+                    # "model_path": "stt_en_conformer_ctc_large",
+                    "parameters": {
+                        "asr_based_vad": True, # if True, speech segmentation for diarization is based on word-timestamps from ASR inference.
+                        "asr_based_vad_threshold": 1.0, # Threshold (in sec) that caps the gap between two words when generating VAD timestamps using ASR based VAD.
+                        "asr_batch_size": None, # Batch size can be dependent on each ASR model. Default batch sizes are applied if set to null.
+                        "decoder_delay_in_sec": None, # Native decoder delay. null is recommended to use the default values for each ASR model.
+                        "word_ts_anchor_offset": None, # Offset to set a reference point from the start of the word. Recommended range of values is [-0.05  0.2]. 
+                        "word_ts_anchor_pos": "start", # Select which part of the word timestamp we want to use. The options are": 'start', 'end', 'mid'.
+                        "fix_word_ts_with_VAD": False, # Fix the word timestamp using VAD output. You must provide a VAD model to use this feature.
+                        "colored_text": False, # If True, use colored text to distinguish speakers in the output transcript.
+                        "print_time": True, # If True, the start and end time of each speaker turn is printed in the output transcript.
+                        "break_lines": False # If True, the output transcript breaks the line to fix the line width (default is 90 chars)
+                    },
+                    "ctc_decoder_parameters": { # Optional beam search decoder (pyctcdecode)
+                        "pretrained_language_model": path_to_arpa, # KenLM model file: .arpa model file or .bin binary file.
+                        "beam_width": 32,
+                        "alpha": 0.5,
+                        "beta": 2.5
+                    },
+                    "realigning_lm_parameters": {#, Experimental feature
+                        "arpa_language_model": path_to_arpa, # Provide a KenLM language model in .arpa format.
+                        "min_number_of_words": 3, # Min number of words for the left context.
+                        "max_number_of_words": 10, # Max number of words for the right context.
+                        "logprob_diff_threshold": 1.2  # The threshold for the difference between two log probability values from two hypotheses.
+                    }
+                }
+                # "preprocessor": {
+                #     "_target_": "nemo.collections.asr.modules.AudioToMelSpectrogramPreprocessor",
+                #     "normalize": "per_feature",
+                #     "window_size": 0.025,
+                #     "sample_rate": 16000,
+                #     "window_stride": 0.01,
+                #     "window": "hann",
+                #     "features": 80,
+                #     "n_fft": 512,
+                #     "frame_splicing": 1,
+                #     "dither": 0.00001
+                # }
             }
-            
-            # Convert to OmegaConf and store it separately
-            self.cfg = OmegaConf.create(cfg_dict)
-            
-            # Initialize the diarizer with our config
-            diarizer = ClusteringDiarizer(cfg=self.cfg)
-            
-            logger.info("NeMo ClusteringDiarizer model initialized successfully.")
-            return diarizer
-        except Exception as e:
-            logger.error(f"Error initializing diarizer: {str(e)}")
-            return None
+        }
+        
+        # Convert to OmegaConf and store it separately
+        return OmegaConf.create(cfg_dict)
+        
+        # # Initialize the diarizer with our config
+        # diarizer = ClusteringDiarizer(cfg=self.cfg)
+        
+        # logger.info("NeMo ClusteringDiarizer model initialized successfully.")
+    
+        # """Initialize the NeMo ASR model."""
+        # logger.info("Initializing NeMo ASR")
+        # # ASR inference for words and word timestamps
+        # asr_decoder_ts = ASRDecoderTimeStamps(self.cfg.diarizer)
+        # asr_model = asr_decoder_ts.set_asr_model()
+        
+        # return (diarizer, asr_model)
     
     def create_manifest(self, audio_file_path, duration):
         """Create a manifest file for the audio file."""
         try:
-            # Create temp directory if it doesn't exist
-            temp_dir = "./temp"
-            os.makedirs(temp_dir, exist_ok=True)
-            
             # Create manifest object
             manifest = {
                 "audio_filepath": os.path.abspath(audio_file_path),
                 "offset": 0,
                 "duration": duration,
                 "label": "infer",
-                "text": "-",
-                "num_speakers": None,
-                "rttm_filepath": None,
-                "uem_filepath": None
+                "text": "-"
             }
 
-            manifest_path = os.path.join(temp_dir, "manifest.json")
+            manifest_path = os.path.join(OUT_DIR, "manifest.json")
             
             # Write as JSONL (one JSON object per line)
             with open(manifest_path, "w", encoding="utf-8") as f:
@@ -160,73 +213,107 @@ class NemoProcessor:
             bool: True if processing was successful, False otherwise
             str: Path to the output RTTM file if successful, None otherwise
         """
-        if self.diarizer is None or self.cfg is None:
-            logger.error("NeMo diarizer is not initialized")
+
+        if self.cfg is None:
+            logger.error("NeMo is not initialized")
             return False, None
             
         try:
-            # Create output directory if it doesn't exist
-            out_dir = "./diarization_results"
-            os.makedirs(out_dir, exist_ok=True)
+            # Debug audio information
+            if audio_array is not None:
+                logger.debug(f"Audio array shape: {audio_array.shape}, sample rate: {sample_rate}")
+                logger.debug(f"Audio duration: {len(audio_array) / sample_rate} seconds")
+            else:
+                logger.warning(f"Using file path: {audio_file_path}")
+                if os.path.exists(audio_file_path):
+                    audio_info = sf.info(audio_file_path)
+                    logger.debug(f"Audio file info: {audio_info}")
+                else:
+                    logger.error(f"Audio file does not exist: {audio_file_path}")
+                    return False, None
             
-            # If preprocessed audio is provided, save it to a temporary file for NeMo
+            # Process audio as before with added debugging
             temp_file = None
             if audio_array is not None:
-                # Use NamedTemporaryFile without delete=False to avoid deletion issues
                 temp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
                 temp_name = temp_file.name
-                temp_file.close()  # Close the file but keep it on disk
+                temp_file.close()
                 sf.write(temp_name, audio_array, sample_rate)
                 audio_file_path_for_nemo = temp_name
                 duration = len(audio_array) / sample_rate
+                logger.debug(f"Saved audio array to temp file: {temp_name}")
             else:
                 audio_file_path_for_nemo = audio_file_path
                 audio_info = sf.info(audio_file_path)
                 duration = audio_info.duration
             
-            # Create manifest for this audio file
+            # Create manifest with debugging
             manifest_path = self.create_manifest(audio_file_path_for_nemo, duration)
             if not manifest_path:
                 logger.error("Failed to create manifest file")
                 return False, None
             
-            # Update the manifest path in the config directly
+            # Debug manifest content
+            with open(manifest_path, "r") as f:
+                manifest_content = f.read()
+                logger.debug(f"Manifest content: {manifest_content}")
+                logger.debug(f"Manifest file size: {os.path.getsize(manifest_path)} bytes")
+            
+            # Update config and debug it
             self.cfg.diarizer.manifest_filepath = manifest_path
+            logger.debug(f"Diarizer config: {OmegaConf.to_yaml(self.cfg)}")
             
-            # Run diarization
-            logger.info(f"Running NeMo diarization on {audio_file_path}")
-            
-            # Verify the manifest file exists and is valid before diarizing
-            if not os.path.exists(manifest_path):
-                logger.error(f"Manifest file {manifest_path} does not exist")
-                return False, None
+            # # Debug NeMo internals before diarizing
+            # logger.debug("Checking NeMo dataloader setup...")
+            # try:
+            #     # Try to manually create the dataloader to debug
+            #     from nemo.collections.asr.data.audio_to_label import AudioToSpeechLabelDataset
+            #     dataset = AudioToSpeechLabelDataset(
+            #         manifest_filepath=manifest_path,
+            #         featurizer=self.diarizer.preprocessor,
+            #         labels=[]
+            #     )
+            #     logger.debug(f"Dataset created successfully with {len(dataset)} items")
                 
-            try:
-                with open(manifest_path, "r", encoding="utf-8") as f:
-                    manifest_content = f.read()
-                    logger.info(f"Manifest content before diarization: {manifest_content}")
-                    # Verify it's valid JSON
-                    json.loads(manifest_content)
-            except Exception as e:
-                logger.error(f"Error reading manifest before diarization: {str(e)}")
-                return False, None
+            #     # Try to get one item
+            #     if len(dataset) > 0:
+            #         item = dataset[0]
+            #         logger.debug(f"First dataset item: {item}")
+            # except Exception as e:
+            #     logger.debug(f"Error testing dataloader: {str(e)}")
             
-            # Now run diarization
-            self.diarizer.diarize()
+            logger.info("Running NeMo ASR...")
+            # ASR inference for words and word timestamps
+            asr_decoder_ts = ASRDecoderTimeStamps(self.cfg.diarizer)
+            asr_model = asr_decoder_ts.set_asr_model()
+            word_hyp, word_ts_hyp = asr_decoder_ts.run_ASR(asr_model) # type: ignore
+
+            # Create a class instance for matching ASR and diarization results
+            asr_diar_offline = OfflineDiarWithASR(self.cfg.diarizer)
+            asr_diar_offline.word_ts_anchor_offset = asr_decoder_ts.word_ts_anchor_offset
+
+            # Diarization inference for speaker labels
+            logger.info("Running NeMo diarization...")
+            diar_hyp, diar_score = asr_diar_offline.run_diarization(self.cfg, word_ts_hyp)
+            trans_info_dict = asr_diar_offline.get_transcript_with_speaker_labels(diar_hyp, word_hyp, word_ts_hyp) # type: ignore
+
+            logger.info("Diarization completed successfully")
             
-            # The results are saved to the output directory specified in the config
-            base_name = os.path.basename(audio_file_path).split('.')[0]
-            result_file = os.path.join(out_dir, f"{base_name}_diar_rttm.txt")
+            # Check results
+            base_name = os.path.basename(audio_file_path)
+            result_file = os.path.join(OUT_DIR, "pred_rttms", f"{base_name}.json")
             
-            # Check if the result file exists
             if os.path.exists(result_file):
                 logger.info(f"NeMo diarization completed successfully. Results saved to {result_file}")
                 return True, result_file
             else:
-                logger.warning(f"NeMo diarization completed but no result file found at {result_file}")
+                logger.error(f"NeMo diarization completed but no result file found at {result_file}")
                 return False, None
-            
+                
         except Exception as e:
             logger.error(f"Error processing file with NeMo: {str(e)}")
+            import traceback
+            logger.debug(traceback.format_exc())
             raise e
             return False, None
+

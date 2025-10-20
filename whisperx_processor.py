@@ -10,6 +10,7 @@ import numpy as np
 
 
 logger = logging.getLogger(__name__)
+OUT_DIR = "./whisperx_results"
 
 # Import DiarizationPipeline conditionally to handle testing scenarios
 DiarizationPipeline:Any = None
@@ -45,12 +46,12 @@ class WhisperXProcessor:
         """
         try:            
             # Create output directory if it doesn't exist
-            os.makedirs("./transcription_results", exist_ok=True)
+            os.makedirs(OUT_DIR, exist_ok=True)
             
             logger.info(f"Running WhisperX transcription on {audio_file_path}")
             
             # 1. Transcribe with Whisper (batched)
-            model = whisperx.load_model("large-v2", self.device, compute_type=self.compute_type)
+            model = whisperx.load_model("distil-large-v3", self.device, compute_type=self.compute_type)
             
             # Use preprocessed audio if provided, otherwise load from file
             if audio_array is not None:
@@ -62,12 +63,12 @@ class WhisperXProcessor:
                     audio = whisperx.load_audio(audio_file_path)
                     logger.info(f"Loaded audio from file: {audio_file_path}")
                 else:
-                    logger.warning(f"Audio file not found: {audio_file_path}, using dummy audio")
-                    # Create a dummy audio array for testing
-                    audio = np.zeros(16000)  # 1 second of silence
+                    raise FileNotFoundError(f"Audio file not found: {audio_file_path}")
             
             # Run transcription
             result = model.transcribe(audio, batch_size=16, language=language)
+            
+            # print(result)  # Debug: print the raw transcription result
             
             # 2. Align whisper output
             model_a, metadata = whisperx.load_align_model(language_code=language, device=self.device)
@@ -81,7 +82,6 @@ class WhisperXProcessor:
             # Check if we're in a test environment with mocks
             is_mock = hasattr(model_a, "_extract_mock_name") or str(type(model_a)).find("MagicMock") >= 0 or model_a.__class__.__name__ == "AlignModel"
             
-
             aligned_segments = whisperx.align(result["segments"], model_a, metadata, audio, self.device, return_char_alignments=False)
             
             result = aligned_segments
@@ -96,46 +96,23 @@ class WhisperXProcessor:
             
             # Save the results
             base_name = os.path.basename(audio_file_path).split(".")[0]
-            output_file = os.path.join("./transcription_results", f"{base_name}_transcript.json")
+            output_file = os.path.join(OUT_DIR, f"{base_name}_transcript.json")
             
             with open(output_file, "w") as f:
                 json.dump(result, f, indent=2)
             
             # Also save a readable format
-            readable_output = os.path.join("./transcription_results", f"{base_name}_transcript.txt")
+            readable_output = os.path.join(OUT_DIR, f"{base_name}_transcript.txt")
             
             with open(readable_output, "w") as f:
                 f.write(f"Transcription results for {audio_file_path}\n")
                 f.write("=" * 50 + "\n\n")
                 
                 current_speaker = None
-                transcript_text = ""
                 
                 for segment in result["segments"]:
-                    # Check if the segment has words with speaker information
-                    has_speaker_info = "words" in segment and any("speaker" in word for word in segment.get("words", []))
-                    
-                    if has_speaker_info:
-                        # Process segments with speaker information
-                        for word in segment.get("words", []):
-                            speaker = word.get("speaker", "UNKNOWN")
-                            
-                            if current_speaker is None:
-                                current_speaker = speaker
-                                transcript_text = word["word"] + " "
-                            elif speaker != current_speaker:
-                                f.write(f"[Speaker {current_speaker}]: {transcript_text.strip()}\n\n")
-                                current_speaker = speaker
-                                transcript_text = word["word"] + " "
-                            else:
-                                transcript_text += word["word"] + " "
-                    else:
-                        # Process segments without speaker information
-                        f.write(f"[Segment {segment.get('id', 'unknown')}]: {segment.get('text', '')}\n\n")
-                
-                # Write the last speaker's text if any
-                if transcript_text and current_speaker is not None:
-                    f.write(f"[Speaker {current_speaker}]: {transcript_text.strip()}\n")
+                    if "speaker" in segment and "text" in segment:
+                        f.write(f"[Speaker {segment['speaker']}]: {segment['text']}\n\n")
             
             # Clean up GPU memory
             del model, model_a
