@@ -96,7 +96,7 @@ class ResultMerger:
                     start_time_str = f"{int(start_time // 60):02d}:{int(start_time % 60):02d}.{int((start_time % 1) * 100):02d}"
                     end_time_str = f"{int(end_time // 60):02d}:{int(end_time % 60):02d}.{int((end_time % 1) * 100):02d}"
                     
-                    f.write(f"[{start_time_str} - {end_time_str}] Speaker {speaker}: {text}\n\n")
+                    f.write(f"[{start_time_str}] {speaker}: {text}\n")
             
             logger.info(f"Combined results saved to {output_file}")
             return True, output_file

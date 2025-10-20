@@ -19,9 +19,9 @@ class NemoProcessor:
     def __init__(self):
         """Initialize the NeMo processor."""
         # Store config separately from diarizer
-        self.cfg = self.initialize_config()
+        self.diarizer = self.initialize_diarizer()
     
-    def initialize_config(self):
+    def initialize_diarizer(self):
         """Initialize NeMo."""        
         logger.info("Initializing NeMo...")
         
@@ -30,6 +30,7 @@ class NemoProcessor:
 
         # Create output directory if it doesn't exist
         os.makedirs(OUT_DIR, exist_ok=True)
+        os.makedirs(os.path.join(OUT_DIR, 'temp'), exist_ok=True)
         
         # Create a temporary manifest file to ensure it exists
         manifest_path = os.path.join(OUT_DIR, "manifest.json")
@@ -107,34 +108,34 @@ class NemoProcessor:
                 #         "overlap_infer_spk_limit": 5 # If the estimated number of speakers are larger than this number, overlap speech is not estimated.
                 #     }
                 # },
-                "asr": {
-                    "model_path": "stt_en_citrinet_1024", # Provide NGC cloud ASR model name. stt_en_conformer_ctc_* models are recommended for diarization purposes.
-                    # "model_path": "stt_en_conformer_ctc_large",
-                    "parameters": {
-                        "asr_based_vad": True, # if True, speech segmentation for diarization is based on word-timestamps from ASR inference.
-                        "asr_based_vad_threshold": 1.0, # Threshold (in sec) that caps the gap between two words when generating VAD timestamps using ASR based VAD.
-                        "asr_batch_size": None, # Batch size can be dependent on each ASR model. Default batch sizes are applied if set to null.
-                        "decoder_delay_in_sec": None, # Native decoder delay. null is recommended to use the default values for each ASR model.
-                        "word_ts_anchor_offset": None, # Offset to set a reference point from the start of the word. Recommended range of values is [-0.05  0.2]. 
-                        "word_ts_anchor_pos": "start", # Select which part of the word timestamp we want to use. The options are": 'start', 'end', 'mid'.
-                        "fix_word_ts_with_VAD": False, # Fix the word timestamp using VAD output. You must provide a VAD model to use this feature.
-                        "colored_text": False, # If True, use colored text to distinguish speakers in the output transcript.
-                        "print_time": True, # If True, the start and end time of each speaker turn is printed in the output transcript.
-                        "break_lines": False # If True, the output transcript breaks the line to fix the line width (default is 90 chars)
-                    },
-                    "ctc_decoder_parameters": { # Optional beam search decoder (pyctcdecode)
-                        "pretrained_language_model": path_to_arpa, # KenLM model file: .arpa model file or .bin binary file.
-                        "beam_width": 32,
-                        "alpha": 0.5,
-                        "beta": 2.5
-                    },
-                    "realigning_lm_parameters": {#, Experimental feature
-                        "arpa_language_model": path_to_arpa, # Provide a KenLM language model in .arpa format.
-                        "min_number_of_words": 3, # Min number of words for the left context.
-                        "max_number_of_words": 10, # Max number of words for the right context.
-                        "logprob_diff_threshold": 1.2  # The threshold for the difference between two log probability values from two hypotheses.
-                    }
-                }
+                # "asr": {
+                #     "model_path": "stt_en_citrinet_1024", # Provide NGC cloud ASR model name. stt_en_conformer_ctc_* models are recommended for diarization purposes.
+                #     # "model_path": "stt_en_conformer_ctc_large",
+                #     "parameters": {
+                #         "asr_based_vad": True, # if True, speech segmentation for diarization is based on word-timestamps from ASR inference.
+                #         "asr_based_vad_threshold": 1.0, # Threshold (in sec) that caps the gap between two words when generating VAD timestamps using ASR based VAD.
+                #         "asr_batch_size": None, # Batch size can be dependent on each ASR model. Default batch sizes are applied if set to null.
+                #         "decoder_delay_in_sec": None, # Native decoder delay. null is recommended to use the default values for each ASR model.
+                #         "word_ts_anchor_offset": None, # Offset to set a reference point from the start of the word. Recommended range of values is [-0.05  0.2]. 
+                #         "word_ts_anchor_pos": "start", # Select which part of the word timestamp we want to use. The options are": 'start', 'end', 'mid'.
+                #         "fix_word_ts_with_VAD": False, # Fix the word timestamp using VAD output. You must provide a VAD model to use this feature.
+                #         "colored_text": False, # If True, use colored text to distinguish speakers in the output transcript.
+                #         "print_time": True, # If True, the start and end time of each speaker turn is printed in the output transcript.
+                #         "break_lines": False # If True, the output transcript breaks the line to fix the line width (default is 90 chars)
+                #     },
+                #     "ctc_decoder_parameters": { # Optional beam search decoder (pyctcdecode)
+                #         "pretrained_language_model": path_to_arpa, # KenLM model file: .arpa model file or .bin binary file.
+                #         "beam_width": 8,
+                #         "alpha": 0.5,
+                #         "beta": 2.5
+                #     },
+                    # "realigning_lm_parameters": {#, Experimental feature
+                    #     "arpa_language_model": path_to_arpa, # Provide a KenLM language model in .arpa format.
+                    #     "min_number_of_words": 3, # Min number of words for the left context.
+                    #     "max_number_of_words": 10, # Max number of words for the right context.
+                    #     "logprob_diff_threshold": 1.2  # The threshold for the difference between two log probability values from two hypotheses.
+                    # }
+                # }
                 # "preprocessor": {
                 #     "_target_": "nemo.collections.asr.modules.AudioToMelSpectrogramPreprocessor",
                 #     "normalize": "per_feature",
@@ -151,12 +152,14 @@ class NemoProcessor:
         }
         
         # Convert to OmegaConf and store it separately
-        return OmegaConf.create(cfg_dict)
+        self.cfg = OmegaConf.create(cfg_dict)
         
         # # Initialize the diarizer with our config
-        # diarizer = ClusteringDiarizer(cfg=self.cfg)
+        diarizer = ClusteringDiarizer(cfg=self.cfg).to(self.cfg.device)
         
-        # logger.info("NeMo ClusteringDiarizer model initialized successfully.")
+        logger.info("NeMo ClusteringDiarizer model initialized successfully.")
+        
+        return diarizer
     
         # """Initialize the NeMo ASR model."""
         # logger.info("Initializing NeMo ASR")
@@ -166,7 +169,7 @@ class NemoProcessor:
         
         # return (diarizer, asr_model)
     
-    def create_manifest(self, audio_file_path, duration):
+    def create_manifest(self, audio_file_path, duration, raw_text):
         """Create a manifest file for the audio file."""
         try:
             # Create manifest object
@@ -175,7 +178,7 @@ class NemoProcessor:
                 "offset": 0,
                 "duration": duration,
                 "label": "infer",
-                "text": "-"
+                "text": json.dumps(raw_text)
             }
 
             manifest_path = os.path.join(OUT_DIR, "manifest.json")
@@ -200,7 +203,7 @@ class NemoProcessor:
             logger.error(f"Error creating manifest for {audio_file_path}: {str(e)}")
             return None
     
-    def process_audio(self, audio_file_path, audio_array=None, sample_rate=16000):
+    def process_audio(self, audio_file_path, audio_array=None, sample_rate=16000, raw_text="-"):
         """
         Process audio with NeMo for diarization.
         
@@ -235,9 +238,7 @@ class NemoProcessor:
             # Process audio as before with added debugging
             temp_file = None
             if audio_array is not None:
-                temp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
-                temp_name = temp_file.name
-                temp_file.close()
+                temp_name = os.path.join(OUT_DIR, 'temp', os.path.splitext(os.path.basename(audio_file_path))[0] + '.wav')
                 sf.write(temp_name, audio_array, sample_rate)
                 audio_file_path_for_nemo = temp_name
                 duration = len(audio_array) / sample_rate
@@ -248,7 +249,7 @@ class NemoProcessor:
                 duration = audio_info.duration
             
             # Create manifest with debugging
-            manifest_path = self.create_manifest(audio_file_path_for_nemo, duration)
+            manifest_path = self.create_manifest(audio_file_path_for_nemo, duration, "-")
             if not manifest_path:
                 logger.error("Failed to create manifest file")
                 return False, None
@@ -282,26 +283,27 @@ class NemoProcessor:
             # except Exception as e:
             #     logger.debug(f"Error testing dataloader: {str(e)}")
             
-            logger.info("Running NeMo ASR...")
-            # ASR inference for words and word timestamps
-            asr_decoder_ts = ASRDecoderTimeStamps(self.cfg.diarizer)
-            asr_model = asr_decoder_ts.set_asr_model()
-            word_hyp, word_ts_hyp = asr_decoder_ts.run_ASR(asr_model) # type: ignore
+            # logger.info("Running NeMo ASR...")
+            # # ASR inference for words and word timestamps
+            # asr_decoder_ts = ASRDecoderTimeStamps(self.cfg.diarizer)
+            # asr_model = asr_decoder_ts.set_asr_model()
+            # word_hyp, word_ts_hyp = asr_decoder_ts.run_ASR(asr_model) # type: ignore
 
-            # Create a class instance for matching ASR and diarization results
-            asr_diar_offline = OfflineDiarWithASR(self.cfg.diarizer)
-            asr_diar_offline.word_ts_anchor_offset = asr_decoder_ts.word_ts_anchor_offset
+            # # Create a class instance for matching ASR and diarization results
+            # asr_diar_offline = OfflineDiarWithASR(self.cfg.diarizer)
+            # asr_diar_offline.word_ts_anchor_offset = asr_decoder_ts.word_ts_anchor_offset
 
             # Diarization inference for speaker labels
             logger.info("Running NeMo diarization...")
-            diar_hyp, diar_score = asr_diar_offline.run_diarization(self.cfg, word_ts_hyp)
-            trans_info_dict = asr_diar_offline.get_transcript_with_speaker_labels(diar_hyp, word_hyp, word_ts_hyp) # type: ignore
+            # diar_hyp, diar_score = asr_diar_offline.run_diarization(self.cfg, word_ts_hyp)
+            #  trans_info_dict = asr_diar_offline.get_transcript_with_speaker_labels(diar_hyp, word_hyp, word_ts_hyp) # type: ignore
 
+            self.diarizer.diarize()
             logger.info("Diarization completed successfully")
             
             # Check results
-            base_name = os.path.basename(audio_file_path)
-            result_file = os.path.join(OUT_DIR, "pred_rttms", f"{base_name}.json")
+            base_name = os.path.splitext(os.path.basename(audio_file_path_for_nemo))[0]
+            result_file = os.path.join(OUT_DIR, "pred_rttms", f"{base_name}.rttm")
             
             if os.path.exists(result_file):
                 logger.info(f"NeMo diarization completed successfully. Results saved to {result_file}")
@@ -316,4 +318,3 @@ class NemoProcessor:
             logger.debug(traceback.format_exc())
             raise e
             return False, None
-

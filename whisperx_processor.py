@@ -51,7 +51,15 @@ class WhisperXProcessor:
             logger.info(f"Running WhisperX transcription on {audio_file_path}")
             
             # 1. Transcribe with Whisper (batched)
-            model = whisperx.load_model("distil-large-v3", self.device, compute_type=self.compute_type)
+            model = whisperx.load_model("large-v3-turbo", self.device, 
+                                        compute_type=self.compute_type,
+                                        vad_options={'model': 'snakers4/silero-vad'},
+                                        download_root='./models', language='en',
+                                        asr_options={'multilingual': False,
+                                                    'hallucination_silence_threshold': 20,
+                                                    'no_speech_threshold': 0.1
+                                                    }
+                                        )
             
             # Use preprocessed audio if provided, otherwise load from file
             if audio_array is not None:
@@ -68,10 +76,15 @@ class WhisperXProcessor:
             # Run transcription
             result = model.transcribe(audio, batch_size=16, language=language)
             
+            raw_text = result
+            
             # print(result)  # Debug: print the raw transcription result
             
             # 2. Align whisper output
-            model_a, metadata = whisperx.load_align_model(language_code=language, device=self.device)
+            model_a, metadata = whisperx.load_align_model(language_code=language, 
+                                                          device=self.device,
+                                                          model_name='SrihariGKS/wav2vec-asr-fine-tuned-english-3',
+                                                          cache_dir='./models')
             
             # Add error handling for align model
             if hasattr(model_a, "__class__") and hasattr(model_a.__class__, "__name__"):
@@ -87,7 +100,9 @@ class WhisperXProcessor:
             result = aligned_segments
 
             # 3. Assign speaker labels
-            diarize_model = DiarizationPipeline(use_auth_token=None, device=self.device)
+            diarize_model = DiarizationPipeline(use_auth_token=os.getenv('HUGGINGFACE_TOKEN'),
+                                                device=self.device,
+                                                cache_dir='./models')
             
             diarize_segments = diarize_model(audio, min_speakers=1, max_speakers=8)
             
@@ -95,7 +110,7 @@ class WhisperXProcessor:
             result = whisperx.assign_word_speakers(diarize_segments, result)
             
             # Save the results
-            base_name = os.path.basename(audio_file_path).split(".")[0]
+            base_name = os.path.splitext(os.path.basename(audio_file_path))[0]
             output_file = os.path.join(OUT_DIR, f"{base_name}_transcript.json")
             
             with open(output_file, "w") as f:
@@ -112,7 +127,7 @@ class WhisperXProcessor:
                 
                 for segment in result["segments"]:
                     if "speaker" in segment and "text" in segment:
-                        f.write(f"[Speaker {segment['speaker']}]: {segment['text']}\n\n")
+                        f.write(f"[Speaker {segment['speaker']}]: {segment['text']}\n")
             
             # Clean up GPU memory
             del model, model_a
@@ -123,7 +138,7 @@ class WhisperXProcessor:
                 torch.cuda.empty_cache()
             
             logger.info(f"WhisperX processing completed. Results saved to {output_file} and {readable_output}")
-            return True, output_file
+            return True, output_file, raw_text
             
         except Exception as e:
             logger.error(f"Error processing file with WhisperX: {str(e)}")

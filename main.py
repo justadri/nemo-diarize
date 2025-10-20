@@ -71,7 +71,7 @@ def main():
     result_merger = ResultMerger()
     
     # Get the directory to process from the user
-    audio_dir = input("Enter the directory containing audio files to process: ")
+    audio_dir = "recordings" #input("Enter the directory containing audio files to process: ")
     
     # Check if the directory exists
     if not os.path.isdir(audio_dir):
@@ -79,7 +79,7 @@ def main():
         return
     
     # Get language for transcription
-    language = input("Enter language code for transcription (e.g., 'en' for English, default is English): ").strip() or "en"
+    language = "en" # input("Enter language code for transcription (e.g., 'en' for English, default is English): ").strip() or "en"
     
     # Show available preprocessing profiles
     profiles = audio_preprocessor.get_available_profiles()
@@ -88,7 +88,7 @@ def main():
         print(f"- {name}: {description}")
     
     # Get preprocessing profile
-    profile_name = input("\nSelect preprocessing profile (default: standard): ").strip().lower() or "standard"
+    profile_name = "telephone" # input("\nSelect preprocessing profile (default: standard): ").strip().lower() or "standard"
     if profile_name not in profiles:
         logger.warning(f"Profile '{profile_name}' not found. Using 'standard' profile.")
         profile_name = "standard"
@@ -118,11 +118,11 @@ def main():
             logger.error(f"Failed to preprocess audio: {audio_path}")
             raise Exception("Preprocessing failed")
 
-        # Step 2: Process with NeMo for diarization
-        nemo_success, nemo_file = nemo_processor.process_audio(audio_path, audio_array, sample_rate)
-        
         # Step 3: Process with WhisperX for transcription
-        whisperx_success, whisperx_file = whisperx_processor.process_audio(audio_path, audio_array, language)
+        whisperx_success, whisperx_file, raw_text = whisperx_processor.process_audio(audio_path, audio_array, language)
+
+        # Step 2: Process with NeMo for diarization
+        nemo_success, nemo_file = nemo_processor.process_audio(audio_file_path=audio_path, audio_array=audio_array, sample_rate=sample_rate, raw_text=raw_text)
         
         # Step 4: Merge results if both were successful
         if nemo_success and whisperx_success:
