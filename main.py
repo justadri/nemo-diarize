@@ -71,7 +71,7 @@ def main():
     result_merger = ResultMerger()
     
     # Get the directory to process from the user
-    audio_dir = "recordings" #input("Enter the directory containing audio files to process: ")
+    audio_dir = input("Enter the directory containing audio files to process: ")
     
     # Check if the directory exists
     if not os.path.isdir(audio_dir):
@@ -79,7 +79,7 @@ def main():
         return
     
     # Get language for transcription
-    language = "en" # input("Enter language code for transcription (e.g., 'en' for English, default is English): ").strip() or "en"
+    language = input("Enter language code for transcription (e.g., 'en' for English, default is English): ").strip() or "en"
     
     # Show available preprocessing profiles
     profiles = audio_preprocessor.get_available_profiles()
@@ -88,7 +88,7 @@ def main():
         print(f"- {name}: {description}")
     
     # Get preprocessing profile
-    profile_name = "telephone" # input("\nSelect preprocessing profile (default: standard): ").strip().lower() or "standard"
+    profile_name = input("\nSelect preprocessing profile (default: standard): ").strip().lower() or "standard"
     if profile_name not in profiles:
         logger.warning(f"Profile '{profile_name}' not found. Using 'standard' profile.")
         profile_name = "standard"
