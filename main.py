@@ -7,6 +7,7 @@ import torch
 # import sys
 from pathlib import Path
 from tqdm import tqdm
+import gc
 
 # Import our modules
 from audio_preprocessor import AudioPreprocessor
@@ -142,6 +143,10 @@ def main():
                 logger.warning(f"Failed to merge results for {input_audio_path}")
         else:
             logger.warning(f"Failed to process {input_audio_path} with {'NeMo' if not nemo_success else ''}  {'WhisperX' if not whisperx_success else ''}")
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
     
     logger.info("All files processed. Results are in the ./diarization_results, ./transcription_results, and ./combined_results directories.")
 

@@ -151,7 +151,7 @@ class WhisperXProcessor:
         num_workers = 0
         
         if self.device == 'cuda':
-            batch_size = 16
+            batch_size = 8
             num_workers = 0
             
         try:            
