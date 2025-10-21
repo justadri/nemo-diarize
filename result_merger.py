@@ -15,7 +15,7 @@ class ResultMerger:
         """Initialize the result merger."""
         pass
     
-    def merge_results(self, audio_file_path, nemo_file, whisperx_file):
+    def merge_results(self, audio_file_path, nemo_file, whisperx_file, combined_file_path):
         """
         Merge NeMo diarization with WhisperX transcription for a comprehensive result.
         
@@ -23,6 +23,7 @@ class ResultMerger:
             audio_file_path (str): Path to the original audio file
             nemo_file (str): Path to the NeMo RTTM file
             whisperx_file (str): Path to the WhisperX JSON file
+            out_path (str)
             
         Returns:
             bool: True if merging was successful, False otherwise
@@ -60,11 +61,7 @@ class ResultMerger:
             with open(whisperx_file, 'r') as f:
                 whisperx_data = json.load(f)
             
-            # Create a combined output
-            base_name = os.path.basename(audio_file_path).split('.')[0]
-            output_file = os.path.join(OUT_DIR, f"{base_name}_combined.txt")
-            
-            with open(output_file, 'w') as f:
+            with open(combined_file_path, 'w') as f:
                 f.write(f"Combined diarization and transcription for {audio_file_path}\n")
                 f.write("=" * 50 + "\n\n")
                 
@@ -91,8 +88,8 @@ class ResultMerger:
                     
                     f.write(f"[{start_time_str}] {speaker}: {text}\n")
             
-            logger.info(f"Combined results saved to {output_file}")
-            return True, output_file
+            logger.info(f"Combined results saved to {combined_file_path}")
+            return True, combined_file_path
             
         except Exception as e:
             logger.error(f"Error combining NeMo and WhisperX results: {str(e)}")

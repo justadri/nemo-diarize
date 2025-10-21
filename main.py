@@ -19,7 +19,8 @@ from result_merger import ResultMerger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-OUT_DIR = './output/audio'
+AUDIO_OUT_DIR = './output/audio'
+COMBINED_OUT_DIR = './output/combined'
 
 def check_dependencies():
     """Check required dependencies."""
@@ -40,7 +41,7 @@ def check_dependencies():
             logger.error("ffmpeg-python is not installed.")
             return False
 
-        os.makedirs(OUT_DIR, exist_ok=True)
+        os.makedirs(AUDIO_OUT_DIR, exist_ok=True)
         
         return True
     except Exception as e:
@@ -116,11 +117,18 @@ def main():
         input_audio_path = str(input_audio_file)
         logger.info(f"Processing {input_audio_path}")
         
-        output_path = os.path.join(OUT_DIR, os.path.splitext(os.path.basename(input_audio_path))[0] + '.wav')
+        base_name = os.path.splitext(os.path.basename(input_audio_path))[0]
+        combined_results_path = os.path.join(COMBINED_OUT_DIR, f"{base_name}_combined.txt")
+        
+        if os.path.exists(combined_results_path) and os.path.getsize(combined_results_path) > 0:
+            logger.info(f"already processed {input_audio_file}, moving on")
+            continue
+        
+        processed_audio_output_path = os.path.join(AUDIO_OUT_DIR,  + '.wav')
         # Step 1: Preprocess audio with selected profile
         processed_audio_path, sample_rate = audio_preprocessor.preprocess_audio(input_file=input_audio_path, 
                                                                                 profile_name=profile_name,
-                                                                                output_path=output_path)
+                                                                                output_path=processed_audio_output_path)
         
         if processed_audio_path is None or sample_rate is None:
             logger.error(f"Failed to preprocess audio: {input_audio_path}")
@@ -136,7 +144,12 @@ def main():
         
         # Step 4: Merge results if both were successful
         if nemo_success and whisperx_success:
-            merge_success, combined_file = result_merger.merge_results(input_audio_path, nemo_file, whisperx_file)
+            merge_success, combined_file = result_merger.merge_results(
+                input_audio_path, 
+                nemo_file, 
+                whisperx_file,
+                combined_results_path
+            )
             if merge_success:
                 logger.info(f"Successfully processed {input_audio_path}")
             else:
