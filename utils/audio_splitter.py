@@ -61,7 +61,7 @@ def get_audio_duration(file_path):
 
 def split_audio_file(file_path, output_dir, originals_dir, segment_duration=MAX_LENGTH_MINS*60):
     """
-    Split audio file into segments of specified duration.
+    Split audio file into segments of specified duration with 30-second overlap.
     
     Args:
         file_path: Path to the audio file
@@ -115,25 +115,26 @@ def split_audio_file(file_path, output_dir, originals_dir, segment_duration=MAX_
         # Calculate segment start time with overlap
         # First segment starts at 0, subsequent segments start with overlap
         segment_start = max(0, i * effective_segment_duration)
+        
         # For the last segment, make sure we don't exceed the file duration
         current_segment_duration = min(segment_duration, duration - segment_start)
         
         output_filename = f"{file_stem}_{i+1:02d}{file_ext}"
         output_path = Path(output_dir / output_filename)
         
-        print(f"Creating segment {i+1}/{num_segments}: {output_filename} (Start: {segment_start}s,"
-              + " Duration: {current_segment_duration}s)")
-        
-        input_path_str = str(file_path.resolve())
-        output_path_str = str(output_path.resolve())
+        print(f"Creating segment {i+1}/{num_segments}: {output_filename} (Start: {segment_start}s, Duration: {current_segment_duration}s)")
         
         try:
+            # Convert paths to strings for better handling with spaces
+            input_path_str = str(file_path.resolve())
+            output_path_str = str(output_path.resolve())
+            
             # Use ffmpeg to extract the segment
             (
                 ffmpeg
                 .input(input_path_str, ss=segment_start, t=current_segment_duration, y=None)
                 .output(output_path_str, acodec='copy', loglevel='error', hide_banner=None)
-                .run()
+                .run(capture_stdout=True, capture_stderr=True)
             )
             print(f"Created: {output_filename}")
             
@@ -142,7 +143,11 @@ def split_audio_file(file_path, output_dir, originals_dir, segment_duration=MAX_
                 print(f"Error: Segment file {output_filename} was not created.")
                 all_segments_success = False
         except ffmpeg.Error as e:
-            print(f"Error creating segment {i+1}: {e.stderr.decode('utf-8') if (hasattr(e, 'stderr') and e.stderr) else str(e)}")
+            error_msg = e.stderr.decode('utf-8') if (hasattr(e, 'stderr') and e.stderr) else str(e)
+            print(f"Error creating segment {i+1}: {error_msg}")
+            # Check if error is related to file paths
+            if "No such file or directory" in error_msg or "Invalid argument" in error_msg:
+                print(f"This may be due to spaces in the file path. Input path: '{input_path_str}', Output path: '{output_path_str}'")
             all_segments_success = False
     
     # Only move the original file if all segments were created successfully
