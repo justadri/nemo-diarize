@@ -42,15 +42,15 @@ class NemoProcessor:
         
         cfg_dict = {
             "name": "ClusterDiarizer",
-            "num_workers": 0,
+            "num_workers": 0, # Increase from 0 for parallel processing
             "sample_rate": 16000,
-            "batch_size": 8,
+            "batch_size": 8, # Increase for better GPU utilization
             "device": device,
             "verbose": True,
-            # "max_num_of_spks": 8,
-            # "scale_n": 5,
-            # "soft_label_thres": 0.5,
-            # "emb_batch_size": 0,
+            "max_num_of_spks": 8,
+            "scale_n": 8, # Higher value increases sensitivity to speaker differences
+            "soft_label_thres": 0.4, # Lower threshold for easier speaker separation
+            "emb_batch_size": 0, # Set positive for batch processing
             "diarizer": {
                 "manifest_filepath": manifest_path,
                 "out_dir": OUT_DIR,
@@ -61,16 +61,16 @@ class NemoProcessor:
                     "model_path": "vad_multilingual_marblenet",
                     "external_vad_manifest": None,
                     "parameters": {
-                        "window_length_in_sec": 0.63,
-                        "shift_length_in_sec": 0.08,
-                        "smoothing": False, # False or type of smoothing method (eg: median)
+                        "window_length_in_sec": 0.5,
+                        "shift_length_in_sec": 0.05,
+                        "smoothing": "median", # False or type of smoothing method (eg: median)
                         "overlap": 0.5,
-                        "onset": 0.5, # Onset threshold for detecting the beginning and end of a speech
-                        "offset": 0.3, # Offset threshold for detecting the end of a speech
-                        "pad_onset": 0.2, # Adding durations before each speech segment
-                        "pad_offset": 0.2, # Adding durations after each speech segment
-                        "min_duration_on": 0.2, # Threshold for short speech segment deletion
-                        "min_duration_off": 0.2, # Threshold for small non_speech deletion
+                        "onset": 0.4, # Onset threshold for detecting the beginning and end of a speech
+                        "offset": 0.4, # Offset threshold for detecting the end of a speech
+                        "pad_onset": 0.1, # Adding durations before each speech segment
+                        "pad_offset": 0.1, # Adding durations after each speech segment
+                        "min_duration_on": 0.15, # Threshold for short speech segment deletion
+                        "min_duration_off": 0.15, # Threshold for small non_speech deletion
                         "filter_speech_first": True
                         # "threshold": 0.5
                     }
@@ -78,9 +78,9 @@ class NemoProcessor:
                 "speaker_embeddings": {
                     "model_path": "titanet_large",
                     "parameters": {
-                        "window_length_in_sec": [1.9,1.2,0.5], # Window length(s) in sec (floating-point number). either a number or a list. ex) 1.5 or [1.5,1.0,0.5]
-                        "shift_length_in_sec": [0.95,0.6,0.25], # Shift length(s) in sec (floating-point number). either a number or a list. ex) 0.75 or [0.75,0.5,0.25]
-                        "multiscale_weights": [1,1,1], # Weight for each scale. should be null (for single scale) or a list matched with window/shift scale count. ex) [0.33,0.33,0.33]
+                        "window_length_in_sec": [1.5, 1.0, 0.5, 0.3], # Window length(s) in sec (floating-point number). either a number or a list. ex) 1.5 or [1.5,1.0,0.5]
+                        "shift_length_in_sec": [0.75, 0.5, 0.25, 0.15], # Shift length(s) in sec (floating-point number). either a number or a list. ex) 0.75 or [0.75,0.5,0.25]
+                        "multiscale_weights": [0.2, 0.2, 0.3, 0.3], # Weight for each scale. should be null (for single scale) or a list matched with window/shift scale count. ex) [0.33,0.33,0.33]
                         "save_embeddings": False # Save embeddings as pickle file for each audio input.
                     }
                 },
@@ -88,66 +88,14 @@ class NemoProcessor:
                     "parameters": {
                         "oracle_num_speakers": False, # If True, use num of speakers value provided in manifest file.
                         "max_num_speakers": 8, # Max number of speakers for each recording. If an oracle number of speakers is passed, this value is ignored.
-                        "enhanced_count_thres": 80, # If the number of segments is lower than this number, enhanced speaker counting is activated.
-                        "max_rp_threshold": 0.25, # Determines the range of p-value search: 0 < p <= max_rp_threshold. 
-                        "sparse_search_volume": 10, # The higher the number, the more values will be examined with more time. 
-                        "maj_vote_spk_count": False,  # If True, take a majority vote on multiple p-values to estimate the number of speakers.
-                        "chunk_cluster_count": 50, # Number of forced clusters (overclustering) per unit chunk in long-form audio clustering.
-                        "embeddings_per_chunk": 10000 # Number of embeddings in each chunk for long-form audio clustering. Adjust based on GPU memory capacity. (default: 10000, approximately 40 mins of audio) 
+                        "enhanced_count_thres": 60, # If the number of segments is lower than this number, enhanced speaker counting is activated.
+                        "max_rp_threshold": 0.15, # Determines the range of p-value search: 0 < p <= max_rp_threshold. 
+                        "sparse_search_volume": 20, # The higher the number, the more values will be examined with more time. 
+                        "maj_vote_spk_count": True,  # If True, take a majority vote on multiple p-values to estimate the number of speakers.
+                        "chunk_cluster_count": 70, # Number of forced clusters (overclustering) per unit chunk in long-form audio clustering.
+                        "embeddings_per_chunk": 8000 # Number of embeddings in each chunk for long-form audio clustering. Adjust based on GPU memory capacity. (default: 10000, approximately 40 mins of audio) 
                     }
-                },
-                # "msdd_model": {
-                #     "model_path": "diar_msdd_telephonic",  # .nemo local model path or pretrained model name for multiscale diarization decoder (MSDD)
-                #     "parameters": {
-                #         "use_speaker_model_from_ckpt": True, # If True, use speaker embedding model in checkpoint. If False, the provided speaker embedding model in config will be used.
-                #         "infer_batch_size": 25, # Batch size for MSDD inference. 
-                #         "sigmoid_threshold": [0.7], # Sigmoid threseecd hold for generating binarized speaker labels. The smaller the more generous on detecting overlaps.
-                #         "seq_eval_mode": False, # If True, use oracle number of speaker and evaluate F1 score for the given speaker sequences. Default is False.
-                #         "split_infer": True, # If True, break the input audio clip to short sequences and calculate cluster average embeddings for inference.
-                #         "diar_window_length": 50, # The length of split short sequence when split_infer is True.
-                #         "overlap_infer_spk_limit": 5 # If the estimated number of speakers are larger than this number, overlap speech is not estimated.
-                #     }
-                # },
-                # "asr": {
-                #     "model_path": "stt_en_citrinet_1024", # Provide NGC cloud ASR model name. stt_en_conformer_ctc_* models are recommended for diarization purposes.
-                #     # "model_path": "stt_en_conformer_ctc_large",
-                #     "parameters": {
-                #         "asr_based_vad": True, # if True, speech segmentation for diarization is based on word-timestamps from ASR inference.
-                #         "asr_based_vad_threshold": 1.0, # Threshold (in sec) that caps the gap between two words when generating VAD timestamps using ASR based VAD.
-                #         "asr_batch_size": None, # Batch size can be dependent on each ASR model. Default batch sizes are applied if set to null.
-                #         "decoder_delay_in_sec": None, # Native decoder delay. null is recommended to use the default values for each ASR model.
-                #         "word_ts_anchor_offset": None, # Offset to set a reference point from the start of the word. Recommended range of values is [-0.05  0.2]. 
-                #         "word_ts_anchor_pos": "start", # Select which part of the word timestamp we want to use. The options are": 'start', 'end', 'mid'.
-                #         "fix_word_ts_with_VAD": False, # Fix the word timestamp using VAD output. You must provide a VAD model to use this feature.
-                #         "colored_text": False, # If True, use colored text to distinguish speakers in the output transcript.
-                #         "print_time": True, # If True, the start and end time of each speaker turn is printed in the output transcript.
-                #         "break_lines": False # If True, the output transcript breaks the line to fix the line width (default is 90 chars)
-                #     },
-                #     "ctc_decoder_parameters": { # Optional beam search decoder (pyctcdecode)
-                #         "pretrained_language_model": path_to_arpa, # KenLM model file: .arpa model file or .bin binary file.
-                #         "beam_width": 8,
-                #         "alpha": 0.5,
-                #         "beta": 2.5
-                #     },
-                    # "realigning_lm_parameters": {#, Experimental feature
-                    #     "arpa_language_model": path_to_arpa, # Provide a KenLM language model in .arpa format.
-                    #     "min_number_of_words": 3, # Min number of words for the left context.
-                    #     "max_number_of_words": 10, # Max number of words for the right context.
-                    #     "logprob_diff_threshold": 1.2  # The threshold for the difference between two log probability values from two hypotheses.
-                    # }
-                # }
-                # "preprocessor": {
-                #     "_target_": "nemo.collections.asr.modules.AudioToMelSpectrogramPreprocessor",
-                #     "normalize": "per_feature",
-                #     "window_size": 0.025,
-                #     "sample_rate": 16000,
-                #     "window_stride": 0.01,
-                #     "window": "hann",
-                #     "features": 80,
-                #     "n_fft": 512,
-                #     "frame_splicing": 1,
-                #     "dither": 0.00001
-                # }
+                }
             }
         }
         
@@ -161,15 +109,7 @@ class NemoProcessor:
         
         return diarizer
     
-        # """Initialize the NeMo ASR model."""
-        # logger.info("Initializing NeMo ASR")
-        # # ASR inference for words and word timestamps
-        # asr_decoder_ts = ASRDecoderTimeStamps(self.cfg.diarizer)
-        # asr_model = asr_decoder_ts.set_asr_model()
-        
-        # return (diarizer, asr_model)
-    
-    def create_manifest(self, audio_file_path, duration, raw_text):
+    def create_manifest(self, audio_file_path, duration):
         """Create a manifest file for the audio file."""
         try:
             # Create manifest object
@@ -178,7 +118,7 @@ class NemoProcessor:
                 "offset": 0,
                 "duration": duration,
                 "label": "infer",
-                "text": json.dumps(raw_text)
+                "text": "-"
             }
 
             manifest_path = os.path.join(OUT_DIR, "manifest.json")
@@ -203,7 +143,7 @@ class NemoProcessor:
             logger.error(f"Error creating manifest for {audio_file_path}: {str(e)}")
             return None
     
-    def process_audio(self, audio_file_path, audio_array=None, sample_rate=16000, raw_text="-"):
+    def process_audio(self, audio_file_path, audio_array=None, sample_rate=16000):
         """
         Process audio with NeMo for diarization.
         
@@ -249,7 +189,7 @@ class NemoProcessor:
                 duration = audio_info.duration
             
             # Create manifest with debugging
-            manifest_path = self.create_manifest(audio_file_path_for_nemo, duration, "-")
+            manifest_path = self.create_manifest(audio_file_path_for_nemo, duration)
             if not manifest_path:
                 logger.error("Failed to create manifest file")
                 return False, None
@@ -283,20 +223,8 @@ class NemoProcessor:
             # except Exception as e:
             #     logger.debug(f"Error testing dataloader: {str(e)}")
             
-            # logger.info("Running NeMo ASR...")
-            # # ASR inference for words and word timestamps
-            # asr_decoder_ts = ASRDecoderTimeStamps(self.cfg.diarizer)
-            # asr_model = asr_decoder_ts.set_asr_model()
-            # word_hyp, word_ts_hyp = asr_decoder_ts.run_ASR(asr_model) # type: ignore
-
-            # # Create a class instance for matching ASR and diarization results
-            # asr_diar_offline = OfflineDiarWithASR(self.cfg.diarizer)
-            # asr_diar_offline.word_ts_anchor_offset = asr_decoder_ts.word_ts_anchor_offset
-
             # Diarization inference for speaker labels
             logger.info("Running NeMo diarization...")
-            # diar_hyp, diar_score = asr_diar_offline.run_diarization(self.cfg, word_ts_hyp)
-            #  trans_info_dict = asr_diar_offline.get_transcript_with_speaker_labels(diar_hyp, word_hyp, word_ts_hyp) # type: ignore
 
             self.diarizer.diarize()
             logger.info("Diarization completed successfully")

@@ -70,6 +70,7 @@ def main():
     nemo_processor = NemoProcessor()
     result_merger = ResultMerger()
     
+    logger.info("Here we go!")
     # Get the directory to process from the user
     audio_dir = input("Enter the directory containing audio files to process: ")
     
@@ -119,10 +120,11 @@ def main():
             raise Exception("Preprocessing failed")
 
         # Step 3: Process with WhisperX for transcription
-        whisperx_success, whisperx_file, raw_text = whisperx_processor.process_audio(audio_path, audio_array, language)
+        whisperx_success, whisperx_file = whisperx_processor.process_audio(audio_path, audio_array, language)
 
         # Step 2: Process with NeMo for diarization
-        nemo_success, nemo_file = nemo_processor.process_audio(audio_file_path=audio_path, audio_array=audio_array, sample_rate=sample_rate, raw_text=raw_text)
+        nemo_success, nemo_file = nemo_processor.process_audio(audio_file_path=audio_path, audio_array=audio_array, 
+                                                               sample_rate=sample_rate)
         
         # Step 4: Merge results if both were successful
         if nemo_success and whisperx_success:

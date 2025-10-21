@@ -28,7 +28,7 @@ class AudioPreprocessor:
         "telephone": {
             "description": "Optimized for telephone calls with narrow frequency range and compression",
             "filters": {
-                "volume_adapt": {"target_level": 0},
+                "volume_adapt": {"target_mean": -10},
                 "bandpass": {"frequency": 2050, "width": 1950},
                 "equalizer": {
                               "bands": [
@@ -42,6 +42,32 @@ class AudioPreprocessor:
                 "alimiter": {"level_in": 0.9, "level_out": 0.9, "limit": 1.0, "attack": 5, "release": 50}
             }
         },
+        "noisy": {
+            "description": "Optimized for nolisy environments",
+            "filters": {
+                "volume_adapt": {"target_mean": -10},
+                "bandpass": {"frequency": 4040, "width": 3060},
+                "afftdn": {"noise_floor": -20},
+                "equalizer": {
+                    "bands": [
+                        {"frequency": 1000, "width": 1, "gain": 2},
+                        {"frequency": 2000, "width": 1, "gain": 3},
+                        {"frequency": 3000, "width": 1, "gain": 2}
+                    ]
+                },
+                "compand": {
+                    "attacks": "0.01", 
+                    "decays": "0.5", 
+                    "points": "-90/-90|-60/-40|-40/-30|-30/-20|0/-10",
+                    "gain": 5
+                },
+                "loudnorm": {
+                    "integrated_target": -6,
+                    "range_target": 11,
+                    "max_true_peak": -1
+                }
+            }
+        }
         # "noisy": {
         #     "description": "Enhanced noise reduction for recordings with significant background noise",
         #     "filters": {
@@ -155,7 +181,7 @@ class AudioPreprocessor:
             if "volume_adapt" in profile["filters"]:
                 logger.info("Applying volume adaptation filter")
                 logger.info("Analyzing volume levels...")
-                detected_max_volume = None
+                detected_mean_volume = None
                 try:
                     out, err = (
                         ffmpeg.input(abs_path)
@@ -164,15 +190,16 @@ class AudioPreprocessor:
                         .run(quiet=True, capture_stderr=True, capture_stdout=True)
                     )
                     # Extract max_volume from stderr
-                    match = re.search(r'max_volume: ([-+]?\d*\.?\d+) dB', err.decode('utf-8'))
-                    detected_max_volume = float(match.group(1)) if match else None
+                    match = re.search(r'mean_volume: ([-+]?\d*\.?\d+) dB', err.decode('utf-8'))
+                    detected_mean_volume = float(match.group(1)) if match else None
                 except ffmpeg.Error as e:
                     logger.error(f"Error analyzing volume levels: {str(e)}, {e.stderr.decode('utf-8')}")
                 
-                if detected_max_volume is not None:
-                    target_level = profile["filters"]["volume_adapt"].get("target_level", 0)
-                    volume_adjustment = target_level - detected_max_volume
-                    logger.info(f"Detected max volume: {detected_max_volume} dB, adjusting by {volume_adjustment} dB to reach target {target_level} dB")
+                if detected_mean_volume is not None:
+                    target_level = profile["filters"]["volume_adapt"].get("target_mean", -10)
+                    volume_adjustment = target_level - detected_mean_volume
+                    logger.info(f"Detected mean volume: {detected_mean_volume} dB, adjusting by {volume_adjustment} dB"
+                                +" to reach target {target_level} dB")
                     filter_chain.append({"name": "volume", "args": { "volume": f"{volume_adjustment}dB" }})
                     
             # Bandpass filter (especially for telephone)
@@ -181,7 +208,7 @@ class AudioPreprocessor:
                 freq = bp_settings.get("frequency", 790)
                 width = bp_settings.get("width", 730)
                 filter_chain.append({"name": "bandpass", "args": { "f": freq, "width_type": "h", "w": width }})
-                logger.info(f"Applied bandpass filter ({freq}Hz-{freq+width}Hz)")
+                logger.info(f"Applied bandpass filter ({freq-width}Hz-{freq+width}Hz)")
             
             # High-pass filter to remove low rumble
             if "highpass" in profile["filters"]:
@@ -189,18 +216,8 @@ class AudioPreprocessor:
                 freq = hp_settings.get("frequency", 80)
                 filter_chain.append({"name": "highpass", "args": { "f": freq }})
                 logger.info(f"Applied high-pass filter ({freq}Hz)")
-                
-            # Equalizer filter
-            if "equalizer" in profile["filters"]:
-                eq_settings = profile["filters"]["equalizer"]
-                for band in eq_settings.get("bands", []):
-                    freq = band.get("frequency", 1000)
-                    width = band.get("width", 100)
-                    gain = band.get("gain", 0)
-                    filter_chain.append({"name": "equalizer", "args": { "f": freq, "w": width, "g": gain }})
-                    logger.info(f"Applied equalizer band ({freq}Hz, {width}Hz, {gain}dB)")
-
-            # Noise reduction
+            
+                        # Noise reduction
             if "noise_reduction" in profile["filters"]:
                 nr_settings = profile["filters"]["noise_reduction"]
                 strength = nr_settings.get("strength", 100)
@@ -218,6 +235,16 @@ class AudioPreprocessor:
                 filter_chain.append({"name": "afftdn", "args": { "nr": nr, "nf": nf }})
                 # filter_chain.append(f"afftdn=nr={nr}:nf={nf}")
                 logger.info(f"Applied FFT-based noise reduction")
+            
+            # Equalizer filter
+            if "equalizer" in profile["filters"]:
+                eq_settings = profile["filters"]["equalizer"]
+                for band in eq_settings.get("bands", []):
+                    freq = band.get("frequency", 1000)
+                    width = band.get("width", 100)
+                    gain = band.get("gain", 0)
+                    filter_chain.append({"name": "equalizer", "args": { "f": freq, "w": width, "g": gain }})
+                    logger.info(f"Applied equalizer band ({freq}Hz, {width}Hz, {gain}dB)")
             
             # Dynamic audio normalization
             if "dynaudnorm" in profile["filters"]:
@@ -237,9 +264,9 @@ class AudioPreprocessor:
             # Audio normalization
             if "loudnorm" in profile["filters"]:
                 ln_settings = profile["filters"]["loudnorm"]
-                target_i = ln_settings.get("target_i", -23)
-                lra = ln_settings.get("lra", 7)
-                tp = ln_settings.get("tp", -2)
+                target_i = ln_settings.get("integrated_target", -23)
+                lra = ln_settings.get("range_target", 7)
+                tp = ln_settings.get("max_true_peak", -2)
                 filter_chain.append({"name": "loudnorm", "args": { "I": target_i, "LRA": lra, "TP": tp }})  
                 # filter_chain.append(f"loudnorm=I={target_i}:LRA={lra}:TP={tp}")
                 logger.info(f"Applied loudness normalization")
@@ -247,11 +274,18 @@ class AudioPreprocessor:
             # Dynamic range compression
             if "compand" in profile["filters"]:
                 comp_settings = profile["filters"]["compand"]
-                attack = comp_settings.get("attack", 0.02)
-                decay = comp_settings.get("decay", 0.2)
-                soft_knee = comp_settings.get("soft_knee", 6)
-                gain = comp_settings.get("gain", 5)
-                filter_chain.append({"name": "compand", "args": { "attacks": attack, "decays": decay, "soft-knee": soft_knee, "gain": gain }})
+                attacks = comp_settings.get("attacks", 0.02)
+                decays = comp_settings.get("decays", 0.2)
+                points = comp_settings.get("points", "-70/-70|-60/-20|1/0")
+                soft_knee = comp_settings.get("soft_knee", 0.01)
+                gain = comp_settings.get("gain", 0)
+                filter_chain.append({"name": "compand", "args": { 
+                    "attacks": attacks,
+                    "decays": decays,
+                    "points": points,
+                    "soft-knee": soft_knee,
+                    "gain": gain 
+                }})
                 # filter_chain.append(f"compand=attack={attack}:decay={decay}:soft_knee={soft_knee}:gain={gain}")
                 logger.info(f"Applied dynamic range compression")
             

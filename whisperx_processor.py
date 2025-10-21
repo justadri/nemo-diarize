@@ -2,15 +2,19 @@
 
 import os
 import json
+import re
 from typing import Any
 import torch
 import logging
 import gc
 import numpy as np
+import traceback
+from whisperx.asr import FasterWhisperPipeline
 
 
 logger = logging.getLogger(__name__)
 OUT_DIR = "./output/whisperx"
+LANGUAGE = 'en'
 
 # Import DiarizationPipeline conditionally to handle testing scenarios
 DiarizationPipeline:Any = None
@@ -31,7 +35,106 @@ class WhisperXProcessor:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.compute_type = "float16" if torch.cuda.is_available() else "int8"
         os.environ['PYANNOTE_CACHE'] = os.path.abspath('./models')
+        self.asr_model:FasterWhisperPipeline = self.initialize_asr()
+        self.align_model, self.align_metadata = self.initialize_align()
+        self.diarize_model = self.initialize_diarize()
+        
+    def initialize_asr(self):
+        logger.info("Initializing WhisperX ASR...")
+        # Create output directory if it doesn't exist
+        os.makedirs(OUT_DIR, exist_ok=True)
+        model = whisperx.load_model("large-v3-turbo", self.device, 
+                                    compute_type=self.compute_type,
+                                    vad_method="silero",
+                                    vad_options={
+                                        'model': 'snakers4/silero-vad',
+                                        'min_silence_duration_ms': 500,
+                                        'min_speech_duration_ms': 250,
+                                        'threshold': 0.3 # Try values between 0.3-0.7
+                                    },
+                                    download_root='./models', 
+                                    language=LANGUAGE,
+                                    asr_options={
+                                        'multilingual': False,
+                                        'hallucination_silence_threshold': 10,
+                                        'no_speech_threshold': 0.05,
+                                        'beam_size': 5,
+                                        'word_timestamps': True,
+                                        'temperatures': [0.0, 0.2, 0.4],
+                                        # 'vad_filter': True,
+                                        'compression_ratio_threshold': 2.8, # Adjust if hallucinating
+                                        'condition_on_previous_text': True,
+                                        'initial_prompt': "this is a conversation about medical concerns", # Add domain context'
+                                    },
+                                    local_files_only=False
+                                    )
+        logger.info("WhisperX ASR loaded successfully")
+        return model
     
+    def initialize_align(self):
+        logger.info("Initializing WhisperX alignment model...")
+        model, metadata = whisperx.load_align_model(language_code=LANGUAGE, 
+                                            device=self.device,
+                                            model_name='facebook/wav2vec2-large-960h-lv60-self',
+                                            # model_name='SrihariGKS/wav2vec-asr-fine-tuned-english-3',
+                                            model_dir='./models'
+                                            )
+        logger.info("WhisperX alignment model loaded successfully")
+        return model, metadata
+    
+    def initialize_diarize(self):
+        logger.info("Initializing WhisperX diarization model...")
+        model = DiarizationPipeline(use_auth_token=os.getenv('HUGGINGFACE_TOKEN'),
+                                    device=self.device)
+        logger.info("WhisperX diarization model loaded successfully")
+        return model
+  
+    def normalize_text(self, text):
+        """
+        Normalizes text by fixing common ASR issues.
+        """
+        if not text:
+            return text
+            
+        # Convert to string if not already
+        text = str(text)
+        
+        # Fix common ASR errors
+        text = re.sub(r'\s+', ' ', text)  # Remove multiple spaces
+        text = text.strip()
+        
+        # Fix common punctuation issues
+        text = re.sub(r'\s+([.,!?;:])', r'\1', text)  # Remove space before punctuation
+        text = re.sub(r'([.,!?;:])\s+([.,!?;:])', r'\1\2', text)  # Fix double punctuation
+        
+        # Fix capitalization
+        sentences = re.split(r'([.!?])\s+', text)
+        result = ""
+        for i in range(0, len(sentences), 2):
+            if i < len(sentences):
+                sentence = sentences[i].capitalize()
+                result += sentence
+                
+            if i + 1 < len(sentences):
+                result += sentences[i+1] + " "
+        
+        # Handle edge case where split didn't work (no sentence terminators)
+        if not result:
+            result = text.capitalize()
+            
+        # Fix common transcription errors (customize based on your domain)
+        # replacements = {
+        #     "gonna": "going to",
+        #     "wanna": "want to",
+        #     "kinda": "kind of",
+        #     # Add domain-specific replacements here
+        # }
+        
+        # for original, replacement in replacements.items():
+        #     result = re.sub(r'\b' + original + r'\b', replacement, result, flags=re.IGNORECASE)
+        
+        return result
+
     def process_audio(self, audio_file_path, audio_array=None, language="en"):
         """
         Process audio with WhisperX for transcription and diarization.
@@ -46,22 +149,7 @@ class WhisperXProcessor:
             str: Path to the output JSON file if successful, None otherwise
         """
         try:            
-            # Create output directory if it doesn't exist
-            os.makedirs(OUT_DIR, exist_ok=True)
-            
-            logger.info(f"Running WhisperX transcription on {audio_file_path}")
-            
             # 1. Transcribe with Whisper (batched)
-            model = whisperx.load_model("large-v3-turbo", self.device, 
-                                        compute_type=self.compute_type,
-                                        vad_options={'model': 'snakers4/silero-vad'},
-                                        download_root='./models', language='en',
-                                        asr_options={'multilingual': False,
-                                                    'hallucination_silence_threshold': 20,
-                                                    'no_speech_threshold': 0.1
-                                                    }
-                                        )
-            
             # Use preprocessed audio if provided, otherwise load from file
             if audio_array is not None:
                 audio = audio_array
@@ -74,77 +162,153 @@ class WhisperXProcessor:
                 else:
                     raise FileNotFoundError(f"Audio file not found: {audio_file_path}")
             
-            # Run transcription
-            result = model.transcribe(audio, batch_size=16, language=language)
-            
-            raw_text = result
-            
-            # print(result)  # Debug: print the raw transcription result
-            
-            # 2. Align whisper output
-            model_a, metadata = whisperx.load_align_model(language_code=language, 
-                                                          device=self.device,
-                                                          model_name='SrihariGKS/wav2vec-asr-fine-tuned-english-3',
-                                                          model_dir='./models')
-            
-            # Add error handling for align model
-            if hasattr(model_a, "__class__") and hasattr(model_a.__class__, "__name__"):
-                logger.info(f"Loaded align model of type: {model_a.__class__.__name__}")
-            else:
-                logger.warning(f"Align model type: {type(model_a)}")
-                
-            # Check if we're in a test environment with mocks
-            is_mock = hasattr(model_a, "_extract_mock_name") or str(type(model_a)).find("MagicMock") >= 0 or model_a.__class__.__name__ == "AlignModel"
-            
-            aligned_segments = whisperx.align(result["segments"], model_a, metadata, audio, self.device, return_char_alignments=False)
-            
-            result = aligned_segments
+            base_name = os.path.splitext(os.path.basename(audio_file_path))[0]
 
-            # 3. Assign speaker labels
-            diarize_model = DiarizationPipeline(use_auth_token=os.getenv('HUGGINGFACE_TOKEN'),
-                                                device=self.device)
+            logger.info(f"Running WhisperX transcription on {audio_file_path}...")
+            # Run transcription
+            asr_results = self.asr_model.transcribe(
+                audio,
+                batch_size=16,
+                language=language,
+                print_progress=True
+            )
+            with open(os.path.join(OUT_DIR, f"{base_name}_asr_raw.json"), "w") as f:
+                json.dump(asr_results, f, indent=2)
+                
+            # 2. Align the transcription
+            logger.info("Aligning whisper output...")
+            aligned_results = whisperx.align(
+                asr_results["segments"], 
+                self.align_model, 
+                self.align_metadata, 
+                audio, 
+                self.device, 
+                return_char_alignments=False
+            )
+            with open(os.path.join(OUT_DIR, f"{base_name}_aligned_raw.json"), "w") as f:
+                json.dump(aligned_results, f, indent=2)
+
+            # 3. Diarize with speaker diarization model
+            logger.info("Starting diarization...")
+            diarize_segments = self.diarize_model(
+                audio, 
+                min_speakers=2, 
+                max_speakers=8
+            )
+            with open(os.path.join(OUT_DIR, f"{base_name}_diarize_raw.json"), "w") as f:
+                json.dump(diarize_segments.to_dict(), f, indent=2)
             
-            logger.info("WhisperX diarization model loaded, starting diarization...")
-            diarize_segments = diarize_model(audio, min_speakers=1, max_speakers=8)
+            # 4. Assign speaker labels
+            logger.info("Assigning speaker labels...")
+            labeled_results =  whisperx.assign_word_speakers(diarize_segments, aligned_results)
             
-            logger.info("WhisperX diarization completerd, assigning word speakers ...")
-            # 4. Assign speaker to words
-            result = whisperx.assign_word_speakers(diarize_segments, result)
+            apply_text_normalization=True
+            merge_short_segments=True
+            filter_low_confidence=False
+            confidence_threshold=0.3
+            min_segment_duration=0.5
+            """
+            Applies post-processing to improve the quality of the final output.
             
+            Args:
+                aligned_result: List of segments with speaker information
+                apply_text_normalization: Whether to normalize text
+                merge_short_segments: Whether to merge very short segments
+                filter_low_confidence: Whether to filter low confidence segments
+                confidence_threshold: Minimum confidence score to keep a segment
+                min_segment_duration: Minimum duration for a segment in seconds
+            
+            Returns:
+                Processed list of segments
+            """
+            processed_segments = []
+            
+            # Filter by confidence if needed
+            if filter_low_confidence:
+                filtered_segments = []
+                for segment in labeled_results['segments']:
+                    if not 'confidence' in segment or segment['confidence'] >= confidence_threshold:
+                        filtered_segments.append(segment)
+                    # Optionally mark low confidence segments instead of removing
+                    else:
+                        segment['text'] = f"[Low confidence: {segment['text']}]"
+                        filtered_segments.append(segment)
+            else:
+                filtered_segments = labeled_results['segments']
+            
+            # Merge short segments if needed
+            if merge_short_segments:
+                merged_segments = []
+                current_segment = None
+                
+                for segment in filtered_segments:
+                    # Start a new current segment if none exists
+                    if current_segment is None:
+                        current_segment = segment
+                        continue
+                        
+                    # Check if segments can be merged (same speaker and short)
+                    can_merge = (
+                        'speaker' in current_segment and
+                        'speaker' in segment and
+                        current_segment['speaker'] == segment['speaker'] and
+                        (segment['end'] - segment['start']) < min_segment_duration
+                    )
+                    
+                    # Check for time proximity
+                    time_proximity = (segment['start'] - current_segment['end']) < 0.5
+                    
+                    if can_merge and time_proximity:
+                        # Merge the segments
+                        current_segment['end'] = segment['end']
+                        current_segment['text'] = f"{current_segment['text']} {segment['text']}"
+                        
+                        # Merge word timestamps if available
+                        if 'words' in current_segment and 'words' in segment:
+                            current_segment['words'].extend(segment['words'])
+                    else:
+                        # Add the current segment and start a new one
+                        merged_segments.append(current_segment)
+                        current_segment = segment
+                        
+                # Add the last segment if it exists
+                if current_segment is not None:
+                    merged_segments.append(current_segment)
+                    
+                result_segments = merged_segments
+            else:
+                result_segments = filtered_segments
+            
+            # Apply text normalization if needed
+            if apply_text_normalization:
+                for segment in result_segments:
+                    segment['text'] = self.normalize_text(segment['text'])
+            
+            # Final cleanup and formatting
+            for segment in result_segments:
+                # Round timestamps for cleaner output
+                segment['start'] = round(segment['start'], 3)
+                segment['end'] = round(segment['end'], 3)
+                
+                # Ensure all segments have required attributes
+                if not 'speaker' in segment:
+                    segment['speaker'] = "UNKNOWN"
+                    
+                processed_segments.append(segment)
+
             logger.info("WhisperX completed successfully, saving results...")
             # Save the results
-            base_name = os.path.splitext(os.path.basename(audio_file_path))[0]
             output_file = os.path.join(OUT_DIR, f"{base_name}_transcript.json")
             
+            output = {"segments": processed_segments}
+            
             with open(output_file, "w") as f:
-                json.dump(result, f, indent=2)
-            
-            # Also save a readable format
-            readable_output = os.path.join(OUT_DIR, f"{base_name}_transcript.txt")
-            
-            with open(readable_output, "w") as f:
-                f.write(f"Transcription results for {audio_file_path}\n")
-                f.write("=" * 50 + "\n\n")
-                
-                current_speaker = None
-                
-                for segment in result["segments"]:
-                    if "speaker" in segment and "text" in segment:
-                        f.write(f"[Speaker {segment['speaker']}]: {segment['text']}\n")
-            
-            # Clean up GPU memory
-            # del model, model_a
-            # if diarize_model is not None and not is_mock:
-            #     del diarize_model
-            # gc.collect()
-            # if torch.cuda.is_available():
-            #     torch.cuda.empty_cache()
-            
-            logger.info(f"WhisperX processing completed. Results saved to {output_file} and {readable_output}")
-            return True, output_file, raw_text
+                json.dump(output, f, indent=2)
+                       
+            logger.info(f"WhisperX processing completed. Results saved to {output_file}") # and {readable_output}")
+            return True, output_file
             
         except Exception as e:
             logger.error(f"Error processing file with WhisperX: {str(e)}")
-            import traceback
             logger.error(traceback.format_exc())
             return False, None
