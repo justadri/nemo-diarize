@@ -26,6 +26,7 @@ dependencies = [
     "packaging",
     "psutil",
     "torch",
+    "torchaudio~=2.8.0",
     "tqdm",
     "webdataset",
     "whisperx",
