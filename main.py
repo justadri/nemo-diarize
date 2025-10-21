@@ -124,7 +124,7 @@ def main():
             logger.info(f"already processed {input_audio_file}, moving on")
             continue
         
-        processed_audio_output_path = os.path.join(AUDIO_OUT_DIR,  + '.wav')
+        processed_audio_output_path = os.path.join(AUDIO_OUT_DIR, base_name + '.wav')
         # Step 1: Preprocess audio with selected profile
         processed_audio_path, sample_rate = audio_preprocessor.preprocess_audio(input_file=input_audio_path, 
                                                                                 profile_name=profile_name,

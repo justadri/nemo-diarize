@@ -95,6 +95,9 @@ class AudioPreprocessor:
         """
         return {name: profile["description"] for name, profile in self.PROFILES.items()}
     
+    def progress_handler(progress_info):
+        print('{:.2f}'.format(progress_info['percentage']))
+
     def preprocess_audio(self, input_file, profile_name="standard", custom_filters=None, output_path=None):
         """
         Preprocess audio using ffmpeg with a specific profile or custom filters.
@@ -166,7 +169,7 @@ class AudioPreprocessor:
                     target_level = profile["filters"]["volume_adapt"].get("target_mean", -10)
                     volume_adjustment = target_level - detected_mean_volume
                     logger.info(f"Detected mean volume: {detected_mean_volume} dB, adjusting by {volume_adjustment} dB"
-                                +" to reach target {target_level} dB")
+                                +" to reach target mean {target_mean} dB")
                     filter_chain.append({"name": "volume", "args": { "volume": f"{volume_adjustment}dB" }})
                     
             # Bandpass filter (especially for telephone)
@@ -302,7 +305,7 @@ class AudioPreprocessor:
             
             try:
                 stream = stream.output(output_channel, format='wav', acodec='pcm_s16le', ac=1, ar=self.SAMPLE_RATE, 
-                                       hide_banner=None, loglevel="error")
+                                       hide_banner=None, loglevel="error").progress(self.progress_handler)
             except Exception as e:
                 logger.error(f"Failed to set output format: {str(e)}")
                 return None, None
@@ -313,7 +316,7 @@ class AudioPreprocessor:
                 # cmd = ffmpeg.compile(stream)
                 # logger.info(f"FFmpeg command: {' '.join(cmd)}")
                 
-                out, err = stream.run(capture_stdout=True, capture_stderr=True, quiet=False)
+                out, err = stream.run(capture_stdout=True, capture_stderr=True, quiet=False, threads=10)
                 
                 if err:
                     logger.warning(f"FFmpeg stderr output: {err.decode('utf-8')}")
