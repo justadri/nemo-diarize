@@ -137,7 +137,7 @@ class AudioPreprocessor:
             
             # Start building the ffmpeg pipeline
             try:
-                stream = ffmpeg.input(abs_path_in)
+                stream = ffmpeg.input(abs_path_in, y=None)
             except Exception as e:
                 logger.error(f"Failed to create FFmpeg input: {str(e)}")
                 return None, None
@@ -286,7 +286,7 @@ class AudioPreprocessor:
                 except Exception as e:
                     logger.error(f"Failed to apply filters: {str(e)}")
                     # Fall back to no filters
-                    stream = ffmpeg.input(abs_path_in)
+                    stream = ffmpeg.input(abs_path_in, y=None)
             
             # Set output format to 16kHz mono WAV
             output_channel = 'pipe:'
@@ -384,6 +384,7 @@ class AudioPreprocessor:
             # Use subprocess for simplicity and reliability
             cmd = [
                 'ffmpeg',
+                '-y',
                 '-i', abs_path_in,
                 '-f', 'wav',
                 '-acodec', 'pcm_s16le',

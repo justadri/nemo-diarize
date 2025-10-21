@@ -115,11 +115,11 @@ def main():
         input_audio_path = str(input_audio_file)
         logger.info(f"Processing {input_audio_path}")
         
-        out_name = os.path.join(OUT_DIR, os.path.splitext(os.path.basename(input_audio_path))[0] + '.wav')
+        output_path = os.path.join(OUT_DIR, os.path.splitext(os.path.basename(input_audio_path))[0] + '.wav')
         # Step 1: Preprocess audio with selected profile
         processed_audio_path, sample_rate = audio_preprocessor.preprocess_audio(input_file=input_audio_path, 
                                                                                 profile_name=profile_name,
-                                                                                output_path=out_name)
+                                                                                output_path=output_path)
         
         if processed_audio_path is None or sample_rate is None:
             logger.error(f"Failed to preprocess audio: {input_audio_path}")
@@ -130,7 +130,7 @@ def main():
                                                                            language=language)
 
         # Step 2: Process with NeMo for diarization
-        nemo_success, nemo_file = nemo_processor.process_audio(audio_file_path=processed_audio_path, 
+        nemo_success, nemo_file = nemo_processor.process_audio(audio_file_path=processed_audio_path,
                                                                sample_rate=sample_rate)
         
         # Step 4: Merge results if both were successful

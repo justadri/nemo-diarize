@@ -43,9 +43,9 @@ class WhisperXProcessor:
         logger.info("Initializing WhisperX ASR pipeline...")
         # Create output directory if it doesn't exist
         os.makedirs(OUT_DIR, exist_ok=True)
-        pipeline = whisperx.load_model("large-v3-turbo", self.device, 
+        pipeline = whisperx.asr.load_model("large-v3-turbo", self.device, 
                                     compute_type=self.compute_type,
-                                    vad_method="silero",
+                                    # vad_method="silero",
                                     vad_options={
                                         'model': 'snakers4/silero-vad',
                                         'min_silence_duration_ms': 100,
@@ -56,12 +56,11 @@ class WhisperXProcessor:
                                     language=LANGUAGE,
                                     asr_options={
                                         'multilingual': False,
-                                        'hallucination_silence_threshold': 10,
-                                        'no_speech_threshold': 0.01,
+                                        'hallucination_silence_threshold': 20,
+                                        'no_speech_threshold': 0.1,
                                         'beam_size': 5,
                                         'word_timestamps': True,
-                                        'temperatures': [0.0, 0.2, 0.4, 0.6],
-                                        # 'vad_filter': True,
+                                        'temperatures': [0.0, 0.2, 0.4],
                                         'compression_ratio_threshold': 2.8, # Adjust if hallucinating
                                         'condition_on_previous_text': True,
                                         'initial_prompt': "this is a conversation about medical concerns", # Add domain context'
@@ -148,6 +147,13 @@ class WhisperXProcessor:
             bool: True if processing was successful, False otherwise
             str: Path to the output JSON file if successful, None otherwise
         """
+        batch_size = 8
+        num_workers = 0
+        
+        if self.device == 'cuda':
+            batch_size = 32
+            num_workers = 8
+            
         try:            
             # 1. Transcribe with Whisper (batched)
             # Use preprocessed audio if provided, otherwise load from file
@@ -168,8 +174,8 @@ class WhisperXProcessor:
             # Run transcription
             asr_results_dict = self.asr_pipeline.transcribe(
                 audio=audio,
-                batch_size=16,
-                num_workers=0,
+                batch_size=batch_size,
+                num_workers=num_workers,
                 language=language,
                 chunk_size=30,
                 print_progress=True
@@ -211,107 +217,11 @@ class WhisperXProcessor:
             )
             with open(os.path.join(OUT_DIR, f"{base_name}_labeled_raw.json"), "w") as f:
                 json.dump(labeled_results_dict, f, indent=2)
-            
-            
-            # apply_text_normalization=True
-            # merge_short_segments=True
-            # filter_low_confidence=False
-            # confidence_threshold=0.3
-            # min_segment_duration=0.5
-            # """
-            # Applies post-processing to improve the quality of the final output.
-            
-            # Args:
-            #     aligned_result: List of segments with speaker information
-            #     apply_text_normalization: Whether to normalize text
-            #     merge_short_segments: Whether to merge very short segments
-            #     filter_low_confidence: Whether to filter low confidence segments
-            #     confidence_threshold: Minimum confidence score to keep a segment
-            #     min_segment_duration: Minimum duration for a segment in seconds
-            
-            # Returns:
-            #     Processed list of segments
-            # """
-            # processed_segments = []
-            
-            # # Filter by confidence if needed
-            # if filter_low_confidence:
-            #     filtered_segments = []
-            #     for segment in labeled_results['segments']:
-            #         if not 'confidence' in segment or segment['confidence'] >= confidence_threshold:
-            #             filtered_segments.append(segment)
-            #         # Optionally mark low confidence segments instead of removing
-            #         else:
-            #             segment['text'] = f"[Low confidence: {segment['text']}]"
-            #             filtered_segments.append(segment)
-            # else:
-            #     filtered_segments = labeled_results['segments']
-            
-            # # Merge short segments if needed
-            # if merge_short_segments:
-            #     merged_segments = []
-            #     current_segment = None
-                
-            #     for segment in filtered_segments:
-            #         # Start a new current segment if none exists
-            #         if current_segment is None:
-            #             current_segment = segment
-            #             continue
-                        
-            #         # Check if segments can be merged (same speaker and short)
-            #         can_merge = (
-            #             'speaker' in current_segment and
-            #             'speaker' in segment and
-            #             current_segment['speaker'] == segment['speaker'] and
-            #             (segment['end'] - segment['start']) < min_segment_duration
-            #         )
-                    
-            #         # Check for time proximity
-            #         time_proximity = (segment['start'] - current_segment['end']) < 0.5
-                    
-            #         if can_merge and time_proximity:
-            #             # Merge the segments
-            #             current_segment['end'] = segment['end']
-            #             current_segment['text'] = f"{current_segment['text']} {segment['text']}"
-                        
-            #             # Merge word timestamps if available
-            #             if 'words' in current_segment and 'words' in segment:
-            #                 current_segment['words'].extend(segment['words'])
-            #         else:
-            #             # Add the current segment and start a new one
-            #             merged_segments.append(current_segment)
-            #             current_segment = segment
-                        
-            #     # Add the last segment if it exists
-            #     if current_segment is not None:
-            #         merged_segments.append(current_segment)
-                    
-            #     result_segments = merged_segments
-            # else:
-            #     result_segments = filtered_segments
-            
-            # # Apply text normalization if needed
-            # if apply_text_normalization:
-            #     for segment in result_segments:
-            #         segment['text'] = self.normalize_text(segment['text'])
-            
-            # # Final cleanup and formatting
-            # for segment in result_segments:
-            #     # Round timestamps for cleaner output
-            #     segment['start'] = round(segment['start'], 3)
-            #     segment['end'] = round(segment['end'], 3)
-                
-            #     # Ensure all segments have required attributes
-            #     if not 'speaker' in segment:
-            #         segment['speaker'] = "UNKNOWN"
-                    
-            #     processed_segments.append(segment)
 
             logger.info("WhisperX completed successfully, saving results...")
             # Save the results
             output_file = os.path.join(OUT_DIR, f"{base_name}_transcript.json")
             
-            # output = {"segments": processed_segments}
             
             with open(output_file, "w") as f:
                 json.dump(labeled_results_dict, f, indent=2)

@@ -40,17 +40,25 @@ class NemoProcessor:
         # Create the config for the diarizer
         path_to_arpa = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models', '4gram_big.arpa')
         
+        num_workers = 0
+        batch_size = 8
+        emb_batch_size = 0
+        if device == 'cuda':
+            num_workers = 4
+            batch_size = 16
+            emb_batch_size = 16
+        
         cfg_dict = {
             "name": "ClusterDiarizer",
-            "num_workers": 0, # Increase from 0 for parallel processing
+            "num_workers": num_workers, # Increase from 0 for parallel processing
             "sample_rate": 16000,
-            "batch_size": 8, # Increase for better GPU utilization
+            "batch_size": batch_size, # Increase for better GPU utilization
             "device": device,
             "verbose": True,
             "max_num_of_spks": 8,
             "scale_n": 8, # Higher value increases sensitivity to speaker differences
             "soft_label_thres": 0.4, # Lower threshold for easier speaker separation
-            "emb_batch_size": 0, # Set positive for batch processing
+            "emb_batch_size": emb_batch_size, # Set positive for batch processing
             "diarizer": {
                 "manifest_filepath": manifest_path,
                 "out_dir": OUT_DIR,
