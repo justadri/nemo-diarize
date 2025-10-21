@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 class AudioPreprocessor:
     """Class for preprocessing audio using FFmpeg with specialized profiles."""
+    SAMPLE_RATE = 16000
     
     # Preprocessing profiles for different recording types
     # noise reduction strength 0.00001 to 10000, smoothing 1 to 1000
@@ -68,36 +69,6 @@ class AudioPreprocessor:
                 }
             }
         }
-        # "noisy": {
-        #     "description": "Enhanced noise reduction for recordings with significant background noise",
-        #     "filters": {
-        #         "noise_reduction": {"strength": 10, "smoothing": 20},
-        #         "highpass": {"frequency": 100},
-        #         "afftdn": {"noise_reduction": 12, "noise_floor": -50},
-        #         "loudnorm": {"target_i": -23, "lra": 5, "tp": -2},
-        #         "equalizer": {"frequency": 1000, "width": 1, "gain": 3}
-        #     }
-        # },
-        # "extreme_telephone": {
-        #     "description": "Custom profile for extremely poor quality telephone audio",
-        #     "filters": {
-        #         "bandpass": {"frequency": 250, "width": 3500},  # Wider band for more natural sound
-        #         "noise_reduction": {"strength": 100, "smoothing": 25},  # Stronger noise reduction
-        #         "compand": {"attack": 0.01, "decay": 0.15, "soft_knee": 8, "gain": 7},  # More aggressive compression
-        #         "equalizer": {"frequency": 2500, "width": 1.5, "gain": 5},  # Enhance clarity
-        #         "loudnorm": {"target_i": -16, "lra": 4, "tp": -1.5}  # Even louder normalization
-        #     }
-        # },
-        # "extreme_noise": {
-        #     "description": "Custom profile for extremely noisy audio recordings",
-        #     "filters": {
-        #         "noise_reduction": {"strength": 200, "smoothing": 30},  # Maximum noise reduction
-        #         "afftdn": {"noise_reduction": 15, "noise_floor": -60},  # More aggressive FFT-based noise reduction
-        #         "highpass": {"frequency": 120},  # Higher cutoff to remove more rumble
-        #         "equalizer": {"frequency": 1500, "width": 2, "gain": 6},  # Stronger speech enhancement
-        #         "loudnorm": {"target_i": -20, "lra": 4, "tp": -2}  # Tighter dynamic range
-        #     }
-        # }
     }
     
     def __init__(self):
@@ -124,7 +95,7 @@ class AudioPreprocessor:
         """
         return {name: profile["description"] for name, profile in self.PROFILES.items()}
     
-    def preprocess_audio(self, input_file, profile_name="standard", custom_filters=None):
+    def preprocess_audio(self, input_file, profile_name="standard", custom_filters=None, output_path=None):
         """
         Preprocess audio using ffmpeg with a specific profile or custom filters.
         Returns the audio as a numpy array ready for processing.
@@ -133,26 +104,22 @@ class AudioPreprocessor:
             input_file (str): Path to the input audio file
             profile_name (str): Name of the preprocessing profile to use
             custom_filters (dict, optional): Custom filter settings to override profile
-            
+            output_path (str): the path (with filename) to store the processed file. if none, returns a numpy array
         Returns:
-            tuple: (audio_array, sample_rate) or (None, None) if processing fails
+            tuple: (union(audio_array|audio_path), sample_rate) or (None, None) if processing fails
         """
         if not self.ffmpeg_available:
             logger.error("FFmpeg is not available. Cannot preprocess audio.")
             return None, None
-        
-        # Use the appropriate method based on availability
-        return self._preprocess_with_ffmpeg_python(input_file, profile_name, custom_filters)
-    
-    def _preprocess_with_ffmpeg_python(self, input_file, profile_name="standard", custom_filters=None):
+
         """Implementation using ffmpeg-python."""
         try:
             logger.info(f"Preprocessing audio with ffmpeg-python: {input_file}")
             
             # Verify the input file exists
-            abs_path = os.path.abspath(input_file)
-            if not os.path.exists(abs_path):
-                logger.error(f"Input file does not exist: {abs_path}")
+            abs_path_in = os.path.abspath(input_file)
+            if not os.path.exists(abs_path_in):
+                logger.error(f"Input file does not exist: {abs_path_in}")
                 return None, None
             
             # Get the profile settings
@@ -170,7 +137,7 @@ class AudioPreprocessor:
             
             # Start building the ffmpeg pipeline
             try:
-                stream = ffmpeg.input(abs_path)
+                stream = ffmpeg.input(abs_path_in)
             except Exception as e:
                 logger.error(f"Failed to create FFmpeg input: {str(e)}")
                 return None, None
@@ -184,7 +151,7 @@ class AudioPreprocessor:
                 detected_mean_volume = None
                 try:
                     out, err = (
-                        ffmpeg.input(abs_path)
+                        ffmpeg.input(abs_path_in)
                         .filter('volumedetect')
                         .output('/dev/null', format='null')
                         .run(quiet=True, capture_stderr=True, capture_stdout=True)
@@ -217,7 +184,7 @@ class AudioPreprocessor:
                 filter_chain.append({"name": "highpass", "args": { "f": freq }})
                 logger.info(f"Applied high-pass filter ({freq}Hz)")
             
-                        # Noise reduction
+            # Noise reduction
             if "noise_reduction" in profile["filters"]:
                 nr_settings = profile["filters"]["noise_reduction"]
                 strength = nr_settings.get("strength", 100)
@@ -319,11 +286,23 @@ class AudioPreprocessor:
                 except Exception as e:
                     logger.error(f"Failed to apply filters: {str(e)}")
                     # Fall back to no filters
-                    stream = ffmpeg.input(abs_path)
+                    stream = ffmpeg.input(abs_path_in)
             
             # Set output format to 16kHz mono WAV
+            output_channel = 'pipe:'
+             
+            abs_path_out = ''
+            if output_path:
+                abs_path_out = os.path.abspath(output_path)    
+                if os.path.exists(os.path.dirname(abs_path_out)):
+                    output_channel = abs_path_out
+                else:
+                    logger.error(f"output directory does not exist: {abs_path_out}")
+            logger.info(f"outputting audio to {output_channel}")
+            
             try:
-                stream = stream.output('pipe:', format='wav', acodec='pcm_s16le', ac=1, ar=16000, hide_banner=None, loglevel="error")
+                stream = stream.output(output_channel, format='wav', acodec='pcm_s16le', ac=1, ar=self.SAMPLE_RATE, 
+                                       hide_banner=None, loglevel="error")
             except Exception as e:
                 logger.error(f"Failed to set output format: {str(e)}")
                 return None, None
@@ -334,7 +313,7 @@ class AudioPreprocessor:
                 # cmd = ffmpeg.compile(stream)
                 # logger.info(f"FFmpeg command: {' '.join(cmd)}")
                 
-                out, err = stream.run(capture_stdout=True, capture_stderr=True, quiet=True)
+                out, err = stream.run(capture_stdout=True, capture_stderr=True, quiet=False)
                 
                 if err:
                     logger.warning(f"FFmpeg stderr output: {err.decode('utf-8')}")
@@ -344,32 +323,36 @@ class AudioPreprocessor:
                 if e.stderr:
                     logger.error(f"FFmpeg stderr: {e.stderr.decode('utf-8')}")
                 # Try fallback to simple conversion
-                return self.preprocess_audio_simple(input_file)
+                return self.preprocess_audio_simple(input_file, output_path)
             except Exception as e:
                 logger.error(f"Error running FFmpeg: {str(e)}")
                 # Try fallback to simple conversion
-                return self.preprocess_audio_simple(input_file)
+                return self.preprocess_audio_simple(input_file, output_path)
             
             # Convert the output bytes to a numpy array
-            try:
-                audio_array = np.frombuffer(out, np.int16).astype(np.float32) / 32768.0
-                
-                if len(audio_array) == 0:
-                    logger.error("FFmpeg produced empty output")
+            if output_channel == 'pipe:':
+                try:
+                    audio_array = np.frombuffer(out, np.int16).astype(np.float32) / 32768.0
+                    
+                    if len(audio_array) == 0:
+                        logger.error("FFmpeg produced empty output")
+                        return None, None
+                    
+                    logger.info(f"Audio preprocessing completed successfully: {input_file}")
+                    return audio_array, self.SAMPLE_RATE  # Return audio array and sample rate
+                except Exception as e:
+                    logger.error(f"Error converting FFmpeg output to numpy array: {str(e)}")
                     return None, None
                 
-                logger.info(f"Audio preprocessing completed successfully: {input_file}")
-                return audio_array, 16000  # Return audio array and sample rate
-            except Exception as e:
-                logger.error(f"Error converting FFmpeg output to numpy array: {str(e)}")
-                return None, None
+            else:
+                return abs_path_out, self.SAMPLE_RATE
             
         except Exception as e:
             logger.error(f"Error preprocessing audio: {str(e)}")
             # Try fallback to simple conversion
             return self.preprocess_audio_simple(input_file)
     
-    def preprocess_audio_simple(self, input_file):
+    def preprocess_audio_simple(self, input_file, output_path):
         """
         A simplified version of preprocess_audio that only converts format.
         Useful for testing if FFmpeg is working correctly.
@@ -382,20 +365,31 @@ class AudioPreprocessor:
             logger.info(f"Simple preprocessing of audio: {input_file}")
             
             # Verify the input file exists
-            abs_path = os.path.abspath(input_file)
-            if not os.path.exists(abs_path):
-                logger.error(f"Input file does not exist: {abs_path}")
+            abs_path_in = os.path.abspath(input_file)
+            if not os.path.exists(abs_path_in):
+                logger.error(f"Input file does not exist: {abs_path_in}")
                 return None, None
+            
+            out_dest = '-'
+            
+            if output_path:
+                abs_path_out = os.path.abspath(output_path)
+                if not os.path.exists(os.path.dirname(abs_path_out)):
+                    logger.error(f"output directory does not exist: {abs_path_out}")
+                    return None, None
+                else:
+                    out_dest = abs_path_out
+                    
             
             # Use subprocess for simplicity and reliability
             cmd = [
                 'ffmpeg',
-                '-i', abs_path,
+                '-i', abs_path_in,
                 '-f', 'wav',
                 '-acodec', 'pcm_s16le',
                 '-ac', '1',
-                '-ar', '16000',
-                '-'
+                '-ar', str(self.SAMPLE_RATE),
+                out_dest
             ]
             
             logger.info(f"Simple FFmpeg command: {' '.join(cmd)}")
@@ -405,28 +399,26 @@ class AudioPreprocessor:
                 stderr=subprocess.PIPE,
                 check=False
             )
-            
+   
             if process.returncode != 0:
                 logger.error(f"Simple FFmpeg process failed with code {process.returncode}")
                 logger.error(f"FFmpeg stderr: {process.stderr.decode('utf-8')}")
-                
-                # For testing purposes, generate a simple sine wave as fallback
-                logger.warning("Generating test sine wave as fallback")
-                sample_rate = 16000
-                duration = 3  # seconds
-                t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
-                audio_array = 0.5 * np.sin(2 * np.pi * 1000 * t)
-                return audio_array, 16000
-            
-            # Convert the output bytes to a numpy array
-            audio_array = np.frombuffer(process.stdout, np.int16).astype(np.float32) / 32768.0
-            
-            if len(audio_array) == 0:
-                logger.error("FFmpeg produced empty output")
                 return None, None
             
-            logger.info(f"Simple preprocessing completed successfully: {input_file}")
-            return audio_array, 16000
+            if out_dest == '-':    
+                # Convert the output bytes to a numpy array
+                audio_array = np.frombuffer(process.stdout, np.int16).astype(np.float32) / 32768.0
+            
+                if len(audio_array) == 0:
+                    logger.error("FFmpeg produced empty output")
+                    return None, None
+                
+                logger.info(f"Simple preprocessing completed successfully: {input_file}")
+                return audio_array, self.SAMPLE_RATE
+            else:
+                logger.info(f"Simple preprocessing completed successfully: {input_file}")
+                return abs_path_out, self.SAMPLE_RATE
+            
         except Exception as e:
             logger.error(f"Error in simple preprocessing: {str(e)}")
             return None, None

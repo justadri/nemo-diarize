@@ -35,32 +35,32 @@ class WhisperXProcessor:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.compute_type = "float16" if torch.cuda.is_available() else "int8"
         os.environ['PYANNOTE_CACHE'] = os.path.abspath('./models')
-        self.asr_model:FasterWhisperPipeline = self.initialize_asr()
-        self.align_model, self.align_metadata = self.initialize_align()
-        self.diarize_model = self.initialize_diarize()
+        self.asr_pipeline:FasterWhisperPipeline = self.initialize_asr_pipeline()
+        self.align_model, self.align_metadata = self.initialize_align_model()
+        self.diarize_pipeline = self.initialize_diarize_pipeline()
         
-    def initialize_asr(self):
-        logger.info("Initializing WhisperX ASR...")
+    def initialize_asr_pipeline(self):
+        logger.info("Initializing WhisperX ASR pipeline...")
         # Create output directory if it doesn't exist
         os.makedirs(OUT_DIR, exist_ok=True)
-        model = whisperx.load_model("large-v3-turbo", self.device, 
+        pipeline = whisperx.load_model("large-v3-turbo", self.device, 
                                     compute_type=self.compute_type,
                                     vad_method="silero",
                                     vad_options={
                                         'model': 'snakers4/silero-vad',
-                                        'min_silence_duration_ms': 500,
-                                        'min_speech_duration_ms': 250,
-                                        'threshold': 0.3 # Try values between 0.3-0.7
+                                        'min_silence_duration_ms': 100,
+                                        'min_speech_duration_ms': 100,
+                                        'threshold': 0.2 # Try values between 0.3-0.7
                                     },
                                     download_root='./models', 
                                     language=LANGUAGE,
                                     asr_options={
                                         'multilingual': False,
                                         'hallucination_silence_threshold': 10,
-                                        'no_speech_threshold': 0.05,
+                                        'no_speech_threshold': 0.01,
                                         'beam_size': 5,
                                         'word_timestamps': True,
-                                        'temperatures': [0.0, 0.2, 0.4],
+                                        'temperatures': [0.0, 0.2, 0.4, 0.6],
                                         # 'vad_filter': True,
                                         'compression_ratio_threshold': 2.8, # Adjust if hallucinating
                                         'condition_on_previous_text': True,
@@ -68,10 +68,10 @@ class WhisperXProcessor:
                                     },
                                     local_files_only=False
                                     )
-        logger.info("WhisperX ASR loaded successfully")
-        return model
+        logger.info("WhisperX ASR pipeline loaded successfully")
+        return pipeline
     
-    def initialize_align(self):
+    def initialize_align_model(self):
         logger.info("Initializing WhisperX alignment model...")
         model, metadata = whisperx.load_align_model(language_code=LANGUAGE, 
                                             device=self.device,
@@ -82,12 +82,12 @@ class WhisperXProcessor:
         logger.info("WhisperX alignment model loaded successfully")
         return model, metadata
     
-    def initialize_diarize(self):
-        logger.info("Initializing WhisperX diarization model...")
-        model = DiarizationPipeline(use_auth_token=os.getenv('HUGGINGFACE_TOKEN'),
+    def initialize_diarize_pipeline(self):
+        logger.info("Initializing WhisperX diarization pipeline...")
+        pipeline = DiarizationPipeline(use_auth_token=os.getenv('HUGGINGFACE_TOKEN'),
                                     device=self.device)
-        logger.info("WhisperX diarization model loaded successfully")
-        return model
+        logger.info("WhisperX diarization pipeline loaded successfully")
+        return pipeline
   
     def normalize_text(self, text):
         """
@@ -166,144 +166,155 @@ class WhisperXProcessor:
 
             logger.info(f"Running WhisperX transcription on {audio_file_path}...")
             # Run transcription
-            asr_results = self.asr_model.transcribe(
-                audio,
+            asr_results_dict = self.asr_pipeline.transcribe(
+                audio=audio,
                 batch_size=16,
+                num_workers=0,
                 language=language,
+                chunk_size=30,
                 print_progress=True
             )
             with open(os.path.join(OUT_DIR, f"{base_name}_asr_raw.json"), "w") as f:
-                json.dump(asr_results, f, indent=2)
+                json.dump(asr_results_dict, f, indent=2)
                 
             # 2. Align the transcription
             logger.info("Aligning whisper output...")
-            aligned_results = whisperx.align(
-                asr_results["segments"], 
-                self.align_model, 
-                self.align_metadata, 
-                audio, 
-                self.device, 
-                return_char_alignments=False
+            aligned_results_dict = whisperx.alignment.align(
+                transcript=asr_results_dict["segments"], 
+                model=self.align_model,
+                align_model_metadata=self.align_metadata,
+                audio=audio,
+                device=self.device,
+                return_char_alignments=False,
+                print_progress=True
             )
             with open(os.path.join(OUT_DIR, f"{base_name}_aligned_raw.json"), "w") as f:
-                json.dump(aligned_results, f, indent=2)
+                json.dump(aligned_results_dict, f, indent=2)
 
             # 3. Diarize with speaker diarization model
             logger.info("Starting diarization...")
-            diarize_segments = self.diarize_model(
-                audio, 
+            diarize_segments_df, embeddings_dict = self.diarize_pipeline(
+                audio=audio,
                 min_speakers=2, 
-                max_speakers=8
+                max_speakers=8,
+                return_embeddings=True
             )
             with open(os.path.join(OUT_DIR, f"{base_name}_diarize_raw.json"), "w") as f:
-                json.dump(diarize_segments.to_dict(), f, indent=2)
+                json.dump(diarize_segments_df.to_dict(), f, indent=2)
             
             # 4. Assign speaker labels
             logger.info("Assigning speaker labels...")
-            labeled_results =  whisperx.assign_word_speakers(diarize_segments, aligned_results)
+            labeled_results_dict =  whisperx.diarize.assign_word_speakers(
+                diarize_df=diarize_segments_df,
+                transcript_result=aligned_results_dict,
+                speaker_embeddings=embeddings_dict
+            )
+            with open(os.path.join(OUT_DIR, f"{base_name}_labeled_raw.json"), "w") as f:
+                json.dump(labeled_results_dict, f, indent=2)
             
-            apply_text_normalization=True
-            merge_short_segments=True
-            filter_low_confidence=False
-            confidence_threshold=0.3
-            min_segment_duration=0.5
-            """
-            Applies post-processing to improve the quality of the final output.
             
-            Args:
-                aligned_result: List of segments with speaker information
-                apply_text_normalization: Whether to normalize text
-                merge_short_segments: Whether to merge very short segments
-                filter_low_confidence: Whether to filter low confidence segments
-                confidence_threshold: Minimum confidence score to keep a segment
-                min_segment_duration: Minimum duration for a segment in seconds
+            # apply_text_normalization=True
+            # merge_short_segments=True
+            # filter_low_confidence=False
+            # confidence_threshold=0.3
+            # min_segment_duration=0.5
+            # """
+            # Applies post-processing to improve the quality of the final output.
             
-            Returns:
-                Processed list of segments
-            """
-            processed_segments = []
+            # Args:
+            #     aligned_result: List of segments with speaker information
+            #     apply_text_normalization: Whether to normalize text
+            #     merge_short_segments: Whether to merge very short segments
+            #     filter_low_confidence: Whether to filter low confidence segments
+            #     confidence_threshold: Minimum confidence score to keep a segment
+            #     min_segment_duration: Minimum duration for a segment in seconds
             
-            # Filter by confidence if needed
-            if filter_low_confidence:
-                filtered_segments = []
-                for segment in labeled_results['segments']:
-                    if not 'confidence' in segment or segment['confidence'] >= confidence_threshold:
-                        filtered_segments.append(segment)
-                    # Optionally mark low confidence segments instead of removing
-                    else:
-                        segment['text'] = f"[Low confidence: {segment['text']}]"
-                        filtered_segments.append(segment)
-            else:
-                filtered_segments = labeled_results['segments']
+            # Returns:
+            #     Processed list of segments
+            # """
+            # processed_segments = []
             
-            # Merge short segments if needed
-            if merge_short_segments:
-                merged_segments = []
-                current_segment = None
+            # # Filter by confidence if needed
+            # if filter_low_confidence:
+            #     filtered_segments = []
+            #     for segment in labeled_results['segments']:
+            #         if not 'confidence' in segment or segment['confidence'] >= confidence_threshold:
+            #             filtered_segments.append(segment)
+            #         # Optionally mark low confidence segments instead of removing
+            #         else:
+            #             segment['text'] = f"[Low confidence: {segment['text']}]"
+            #             filtered_segments.append(segment)
+            # else:
+            #     filtered_segments = labeled_results['segments']
+            
+            # # Merge short segments if needed
+            # if merge_short_segments:
+            #     merged_segments = []
+            #     current_segment = None
                 
-                for segment in filtered_segments:
-                    # Start a new current segment if none exists
-                    if current_segment is None:
-                        current_segment = segment
-                        continue
+            #     for segment in filtered_segments:
+            #         # Start a new current segment if none exists
+            #         if current_segment is None:
+            #             current_segment = segment
+            #             continue
                         
-                    # Check if segments can be merged (same speaker and short)
-                    can_merge = (
-                        'speaker' in current_segment and
-                        'speaker' in segment and
-                        current_segment['speaker'] == segment['speaker'] and
-                        (segment['end'] - segment['start']) < min_segment_duration
-                    )
+            #         # Check if segments can be merged (same speaker and short)
+            #         can_merge = (
+            #             'speaker' in current_segment and
+            #             'speaker' in segment and
+            #             current_segment['speaker'] == segment['speaker'] and
+            #             (segment['end'] - segment['start']) < min_segment_duration
+            #         )
                     
-                    # Check for time proximity
-                    time_proximity = (segment['start'] - current_segment['end']) < 0.5
+            #         # Check for time proximity
+            #         time_proximity = (segment['start'] - current_segment['end']) < 0.5
                     
-                    if can_merge and time_proximity:
-                        # Merge the segments
-                        current_segment['end'] = segment['end']
-                        current_segment['text'] = f"{current_segment['text']} {segment['text']}"
+            #         if can_merge and time_proximity:
+            #             # Merge the segments
+            #             current_segment['end'] = segment['end']
+            #             current_segment['text'] = f"{current_segment['text']} {segment['text']}"
                         
-                        # Merge word timestamps if available
-                        if 'words' in current_segment and 'words' in segment:
-                            current_segment['words'].extend(segment['words'])
-                    else:
-                        # Add the current segment and start a new one
-                        merged_segments.append(current_segment)
-                        current_segment = segment
+            #             # Merge word timestamps if available
+            #             if 'words' in current_segment and 'words' in segment:
+            #                 current_segment['words'].extend(segment['words'])
+            #         else:
+            #             # Add the current segment and start a new one
+            #             merged_segments.append(current_segment)
+            #             current_segment = segment
                         
-                # Add the last segment if it exists
-                if current_segment is not None:
-                    merged_segments.append(current_segment)
+            #     # Add the last segment if it exists
+            #     if current_segment is not None:
+            #         merged_segments.append(current_segment)
                     
-                result_segments = merged_segments
-            else:
-                result_segments = filtered_segments
+            #     result_segments = merged_segments
+            # else:
+            #     result_segments = filtered_segments
             
-            # Apply text normalization if needed
-            if apply_text_normalization:
-                for segment in result_segments:
-                    segment['text'] = self.normalize_text(segment['text'])
+            # # Apply text normalization if needed
+            # if apply_text_normalization:
+            #     for segment in result_segments:
+            #         segment['text'] = self.normalize_text(segment['text'])
             
-            # Final cleanup and formatting
-            for segment in result_segments:
-                # Round timestamps for cleaner output
-                segment['start'] = round(segment['start'], 3)
-                segment['end'] = round(segment['end'], 3)
+            # # Final cleanup and formatting
+            # for segment in result_segments:
+            #     # Round timestamps for cleaner output
+            #     segment['start'] = round(segment['start'], 3)
+            #     segment['end'] = round(segment['end'], 3)
                 
-                # Ensure all segments have required attributes
-                if not 'speaker' in segment:
-                    segment['speaker'] = "UNKNOWN"
+            #     # Ensure all segments have required attributes
+            #     if not 'speaker' in segment:
+            #         segment['speaker'] = "UNKNOWN"
                     
-                processed_segments.append(segment)
+            #     processed_segments.append(segment)
 
             logger.info("WhisperX completed successfully, saving results...")
             # Save the results
             output_file = os.path.join(OUT_DIR, f"{base_name}_transcript.json")
             
-            output = {"segments": processed_segments}
+            # output = {"segments": processed_segments}
             
             with open(output_file, "w") as f:
-                json.dump(output, f, indent=2)
+                json.dump(labeled_results_dict, f, indent=2)
                        
             logger.info(f"WhisperX processing completed. Results saved to {output_file}") # and {readable_output}")
             return True, output_file

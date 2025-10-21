@@ -1,19 +1,10 @@
-
-# BEGIN: user added these matplotlib lines to ensure any plots do not pop-up in their UI
-import matplotlib
-matplotlib.use('Agg')  # Set the backend to non-interactive
-import matplotlib.pyplot as plt
-plt.ioff()
-import os
-os.environ['TERM'] = 'dumb'
-# END: user added these matplotlib lines to ensure any plots do not pop-up in their UI
 # filename: main.py
 
 import os
 import logging
 import torch
-import subprocess
-import sys
+# import subprocess
+# import sys
 from pathlib import Path
 from tqdm import tqdm
 
@@ -26,6 +17,8 @@ from result_merger import ResultMerger
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+OUT_DIR = './output/audio'
 
 def check_dependencies():
     """Check required dependencies."""
@@ -46,6 +39,8 @@ def check_dependencies():
             logger.error("ffmpeg-python is not installed.")
             return False
 
+        os.makedirs(OUT_DIR, exist_ok=True)
+        
         return True
     except Exception as e:
         logger.error(f"Error checking dependencies: {str(e)}")
@@ -71,16 +66,21 @@ def main():
     result_merger = ResultMerger()
     
     logger.info("Here we go!")
+    test_mode = (os.getenv('ND_TEST_MODE', '0') != '0')
+    if test_mode:
+        logger.warning("In test mode, using default parameters")
+    
     # Get the directory to process from the user
-    audio_dir = input("Enter the directory containing audio files to process: ")
+    input_audio_dir = "recordings" if test_mode else input("Enter the directory containing audio files to process: ")
     
     # Check if the directory exists
-    if not os.path.isdir(audio_dir):
-        logger.error(f"Directory not found: {audio_dir}")
+    if not os.path.isdir(input_audio_dir):
+        logger.error(f"Directory not found: {input_audio_dir}")
         return
     
     # Get language for transcription
-    language = input("Enter language code for transcription (e.g., 'en' for English, default is English): ").strip() or "en"
+    language = "en" if test_mode else (input(
+        "Enter language code for transcription (e.g., 'en' for English, default is English): ").strip() or "en")
     
     # Show available preprocessing profiles
     profiles = audio_preprocessor.get_available_profiles()
@@ -89,52 +89,59 @@ def main():
         print(f"- {name}: {description}")
     
     # Get preprocessing profile
-    profile_name = input("\nSelect preprocessing profile (default: standard): ").strip().lower() or "standard"
+    profile_name = "telephone" if test_mode else (input(
+        "\nSelect preprocessing profile (default: standard): ").strip().lower() or "standard")
     if profile_name not in profiles:
         logger.warning(f"Profile '{profile_name}' not found. Using 'standard' profile.")
         profile_name = "standard"
     
     # Get all audio files in the directory
     audio_extensions = ['.wav', '.mp3', '.flac', '.ogg', '.m4a', '.amr', '.wma', '.aac', '.aiff', '.alac', '.opus']
-    audio_files = []
+    input_audio_files = []
     
     for ext in audio_extensions:
-        audio_files.extend(list(Path(audio_dir).glob(f"*{ext}")))
+        input_audio_files.extend(list(Path(input_audio_dir).glob(f"*{ext}")))
     
-    if not audio_files:
-        logger.warning(f"No audio files found in {audio_dir}")
+    if not input_audio_files:
+        logger.warning(f"No audio files found in {input_audio_dir}")
         return
     
-    logger.info(f"Found {len(audio_files)} audio files to process")
+    logger.info(f"Found {len(input_audio_files)} audio files to process")
+    
+    input_audio_files.sort()
     
     # Process each audio file
-    for audio_file in tqdm(audio_files, desc="Processing audio files"):
-        audio_path = str(audio_file)
-        logger.info(f"Processing {audio_path}")
+    for input_audio_file in tqdm(input_audio_files, desc="Processing audio files", colour='blue'):
+        input_audio_path = str(input_audio_file)
+        logger.info(f"Processing {input_audio_path}")
         
+        out_name = os.path.join(OUT_DIR, os.path.splitext(os.path.basename(input_audio_path))[0] + '.wav')
         # Step 1: Preprocess audio with selected profile
-        audio_array, sample_rate = audio_preprocessor.preprocess_audio(audio_path, profile_name)
+        processed_audio_path, sample_rate = audio_preprocessor.preprocess_audio(input_file=input_audio_path, 
+                                                                                profile_name=profile_name,
+                                                                                output_path=out_name)
         
-        if audio_array is None or sample_rate is None:
-            logger.error(f"Failed to preprocess audio: {audio_path}")
+        if processed_audio_path is None or sample_rate is None:
+            logger.error(f"Failed to preprocess audio: {input_audio_path}")
             raise Exception("Preprocessing failed")
 
         # Step 3: Process with WhisperX for transcription
-        whisperx_success, whisperx_file = whisperx_processor.process_audio(audio_path, audio_array, language)
+        whisperx_success, whisperx_file = whisperx_processor.process_audio(audio_file_path=processed_audio_path,
+                                                                           language=language)
 
         # Step 2: Process with NeMo for diarization
-        nemo_success, nemo_file = nemo_processor.process_audio(audio_file_path=audio_path, audio_array=audio_array, 
+        nemo_success, nemo_file = nemo_processor.process_audio(audio_file_path=processed_audio_path, 
                                                                sample_rate=sample_rate)
         
         # Step 4: Merge results if both were successful
         if nemo_success and whisperx_success:
-            merge_success, combined_file = result_merger.merge_results(audio_path, nemo_file, whisperx_file)
+            merge_success, combined_file = result_merger.merge_results(input_audio_path, nemo_file, whisperx_file)
             if merge_success:
-                logger.info(f"Successfully processed {audio_path}")
+                logger.info(f"Successfully processed {input_audio_path}")
             else:
-                logger.warning(f"Failed to merge results for {audio_path}")
+                logger.warning(f"Failed to merge results for {input_audio_path}")
         else:
-            logger.warning(f"Failed to process {audio_path} with {'NeMo' if not nemo_success else ''}  {'WhisperX' if not whisperx_success else ''}")
+            logger.warning(f"Failed to process {input_audio_path} with {'NeMo' if not nemo_success else ''}  {'WhisperX' if not whisperx_success else ''}")
     
     logger.info("All files processed. Results are in the ./diarization_results, ./transcription_results, and ./combined_results directories.")
 
