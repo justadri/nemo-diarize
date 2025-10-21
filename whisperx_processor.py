@@ -151,8 +151,8 @@ class WhisperXProcessor:
         num_workers = 0
         
         if self.device == 'cuda':
-            batch_size = 32
-            num_workers = 8
+            batch_size = 16
+            num_workers = 0
             
         try:            
             # 1. Transcribe with Whisper (batched)
@@ -180,8 +180,8 @@ class WhisperXProcessor:
                 chunk_size=30,
                 print_progress=True
             )
-            with open(os.path.join(OUT_DIR, f"{base_name}_asr_raw.json"), "w") as f:
-                json.dump(asr_results_dict, f, indent=2)
+            # with open(os.path.join(OUT_DIR, f"{base_name}_asr_raw.json"), "w") as f:
+            #     json.dump(asr_results_dict, f, indent=2)
                 
             # 2. Align the transcription
             logger.info("Aligning whisper output...")
@@ -194,8 +194,8 @@ class WhisperXProcessor:
                 return_char_alignments=False,
                 print_progress=True
             )
-            with open(os.path.join(OUT_DIR, f"{base_name}_aligned_raw.json"), "w") as f:
-                json.dump(aligned_results_dict, f, indent=2)
+            # with open(os.path.join(OUT_DIR, f"{base_name}_aligned_raw.json"), "w") as f:
+            #     json.dump(aligned_results_dict, f, indent=2)
 
             # 3. Diarize with speaker diarization model
             logger.info("Starting diarization...")
@@ -205,8 +205,8 @@ class WhisperXProcessor:
                 max_speakers=8,
                 return_embeddings=True
             )
-            with open(os.path.join(OUT_DIR, f"{base_name}_diarize_raw.json"), "w") as f:
-                json.dump(diarize_segments_df.to_dict(), f, indent=2)
+            # with open(os.path.join(OUT_DIR, f"{base_name}_diarize_raw.json"), "w") as f:
+            #     json.dump(diarize_segments_df.to_dict(), f, indent=2)
             
             # 4. Assign speaker labels
             logger.info("Assigning speaker labels...")

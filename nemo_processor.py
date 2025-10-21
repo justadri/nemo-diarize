@@ -44,9 +44,9 @@ class NemoProcessor:
         batch_size = 8
         emb_batch_size = 0
         if device == 'cuda':
-            num_workers = 4
-            batch_size = 16
-            emb_batch_size = 16
+            num_workers = 0
+            batch_size = 8
+            emb_batch_size = 8
         
         cfg_dict = {
             "name": "ClusterDiarizer",
