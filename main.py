@@ -117,7 +117,7 @@ def main():
         input_audio_path = str(input_audio_file)
         logger.info(f"Processing {input_audio_path}")
         
-        base_name = os.path.splitext(os.path.basename(input_audio_path))[0]
+        base_name = (os.path.splitext(os.path.basename(input_audio_path))[0]).replace(' ', '_')
         combined_results_path = os.path.join(COMBINED_OUT_DIR, f"{base_name}_combined.txt")
         
         if os.path.exists(combined_results_path) and os.path.getsize(combined_results_path) > 0:
