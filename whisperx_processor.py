@@ -48,21 +48,21 @@ class WhisperXProcessor:
                                     # vad_method="silero",
                                     vad_options={
                                         'model': 'snakers4/silero-vad',
-                                        'min_silence_duration_ms': 100,
-                                        'min_speech_duration_ms': 100,
-                                        'threshold': 0.2 # Try values between 0.3-0.7
+                                        # 'min_silence_duration_ms': 100,
+                                        # 'min_speech_duration_ms': 100,
+                                        # 'threshold': 0.2 # Try values between 0.3-0.7
                                     },
                                     download_root='./models', 
                                     language=LANGUAGE,
                                     asr_options={
                                         'multilingual': False,
-                                        'hallucination_silence_threshold': 20,
-                                        'no_speech_threshold': 0.1,
+                                        # 'hallucination_silence_threshold': 20,
+                                        # 'no_speech_threshold': 0.1,
                                         'beam_size': 5,
                                         'word_timestamps': True,
                                         'temperatures': [0.0, 0.2, 0.4],
-                                        'compression_ratio_threshold': 2.8, # Adjust if hallucinating
-                                        'condition_on_previous_text': True,
+                                        # 'compression_ratio_threshold': 2.8, # Adjust if hallucinating
+                                        # 'condition_on_previous_text': True,
                                         'initial_prompt': "this is a conversation about medical concerns", # Add domain context'
                                     },
                                     local_files_only=False

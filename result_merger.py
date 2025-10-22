@@ -3,6 +3,7 @@
 import os
 import json
 import logging
+import traceback
 
 logger = logging.getLogger(__name__)
 
@@ -93,4 +94,6 @@ class ResultMerger:
             
         except Exception as e:
             logger.error(f"Error combining NeMo and WhisperX results: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise e
             return False, None
