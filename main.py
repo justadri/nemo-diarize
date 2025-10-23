@@ -2,37 +2,28 @@
 
 import os
 import logging
-import torch
-# import subprocess
-# import sys
 from pathlib import Path
 from tqdm import tqdm
-import gc
+import requests
+
+import assemblyai as aai
 
 # Import our modules
 from audio_preprocessor import AudioPreprocessor
-from whisperx_processor import WhisperXProcessor
-from nemo_processor import NemoProcessor
-from result_merger import ResultMerger
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-AUDIO_OUT_DIR = './output/audio'
-COMBINED_OUT_DIR = './output/combined'
+OUT_DIR = './output'
+AUDIO_OUT_DIR = os.path.join (OUT_DIR, 'audio')
+TRANSCRIPT_OUT_DIR = os.path.join(OUT_DIR, 'transcripts')
+
+aai.settings.api_key = ''
 
 def check_dependencies():
     """Check required dependencies."""
     try:
-        # Check WhisperX
-        try:
-            import whisperx
-            logger.info("WhisperX is already installed.")
-        except ImportError:
-            logger.error("WhisperX is not installed.")
-            return False
-        
         # Check ffmpeg-python
         try:
             import ffmpeg
@@ -40,33 +31,31 @@ def check_dependencies():
         except ImportError:
             logger.error("ffmpeg-python is not installed.")
             return False
-
-        os.makedirs(AUDIO_OUT_DIR, exist_ok=True)
         
         return True
     except Exception as e:
         logger.error(f"Error checking dependencies: {str(e)}")
         return False
 
+def convert_timestamp(milliseconds):
+    seconds, milliseconds = divmod(milliseconds, 1000)
+    hours, seconds = divmod(seconds, 3600)
+    minutes, seconds = divmod(seconds, 60)
+    return (f'{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}.{int(milliseconds):03d}')
+
 def main():
-    """Main function to process all audio files in a directory."""
-    # Check if CUDA is available
-    if torch.cuda.is_available():
-        logger.info(f"CUDA is available. Using GPU: {torch.cuda.get_device_name(0)}")
-    else:
-        logger.warning("CUDA is not available. Using CPU. This may be slow.")
-    
     # Check dependencies
     if not check_dependencies():
         logger.error("Required dependencies not found. Exiting.")
         return
     
+    # create output folders if they don't exist
+    os.makedirs(AUDIO_OUT_DIR, exist_ok=True)
+    os.makedirs(TRANSCRIPT_OUT_DIR, exist_ok=True)
+    
     # Initialize processors
     audio_preprocessor = AudioPreprocessor()
-    whisperx_processor = WhisperXProcessor()
-    nemo_processor = NemoProcessor()
-    result_merger = ResultMerger()
-    
+
     logger.info("Here we go!")
     test_mode = (os.getenv('ND_TEST_MODE', '0') != '0')
     if test_mode:
@@ -112,13 +101,24 @@ def main():
     
     input_audio_files.sort()
     
+    # Confifure transcriber
+    config = aai.TranscriptionConfig(
+            speaker_labels=True,
+            format_text=True,
+            punctuate=True,
+            speech_model=aai.SpeechModel.universal,
+            language_code="en_us",
+        )
+        
+    transcriber = aai.Transcriber(config=config)
+    
     # Process each audio file
     for input_audio_file in tqdm(input_audio_files, desc="Processing audio files", colour='blue'):
         input_audio_path = str(input_audio_file)
         logger.info(f"Processing {input_audio_path}")
         
         base_name = (os.path.splitext(os.path.basename(input_audio_path))[0]).replace(' ', '_')
-        combined_results_path = os.path.join(COMBINED_OUT_DIR, f"{base_name}_combined.txt")
+        combined_results_path = os.path.join(TRANSCRIPT_OUT_DIR, f"{base_name}.txt")
         
         if os.path.exists(combined_results_path) and os.path.getsize(combined_results_path) > 0:
             logger.info(f"already processed {input_audio_file}, moving on")
@@ -129,37 +129,34 @@ def main():
         processed_audio_path, sample_rate = audio_preprocessor.preprocess_audio(input_file=input_audio_path, 
                                                                                 profile_name=profile_name,
                                                                                 output_path=processed_audio_output_path)
-        
         if processed_audio_path is None or sample_rate is None:
             logger.error(f"Failed to preprocess audio: {input_audio_path}")
-            raise Exception("Preprocessing failed")
-
-        # Step 3: Process with WhisperX for transcription
-        whisperx_success, whisperx_file = whisperx_processor.process_audio(audio_file_path=processed_audio_path,
-                                                                           language=language)
-
-        # Step 2: Process with NeMo for diarization
-        nemo_success, nemo_file = nemo_processor.process_audio(audio_file_path=processed_audio_path,
-                                                               sample_rate=sample_rate)
+            continue
         
-        # Step 4: Merge results if both were successful
-        if nemo_success and whisperx_success:
-            merge_success, combined_file = result_merger.merge_results(
-                input_audio_path, 
-                nemo_file, 
-                whisperx_file,
-                combined_results_path
-            )
-            if merge_success:
-                logger.info(f"Successfully processed {input_audio_path}")
-            else:
-                logger.warning(f"Failed to merge results for {input_audio_path}")
-        else:
-            logger.warning(f"Failed to process {input_audio_path} with {'NeMo' if not nemo_success else ''}  {'WhisperX' if not whisperx_success else ''}")
+        # step 2: upload the file
+        response = requests.post(url='https://api.assemblyai.com/v2/upload',
+                                 headers={'Authorization': aai.settings.api_key,
+                                          "Content-Type": "application/octet-stream"},
+                                 data=open(processed_audio_path, 'rb')
+                                 )
+        
+        response.raise_for_status()
+        
+        upload_location = response.json()['upload_url']
+        
+        # step 3: transcribe
+        logger.info(f"starting transcription of {input_audio_file}")
+        transcript = transcriber.transcribe(upload_location)
+        if transcript.status == aai.TranscriptStatus.error:
+            raise RuntimeError(transcript.error)
 
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        with open(combined_results_path, 'w') as file:
+            file.write(f"# transcript of {input_audio_file}\n")
+            file.write(f"# {'-' * 50}\n")
+            for utterance in transcript.utterances:
+                line = f"[{convert_timestamp(utterance.start)}] [speaker {utterance.speaker}]: {utterance.text}\n"
+                file.write(line)
+        logger.info(f'completed transcription of {input_audio_file}')
     
     logger.info("All files processed. Results are in the ./diarization_results, ./transcription_results, and ./combined_results directories.")
 
