@@ -20,3 +20,6 @@ temp/*
 
 models/*
 output/*
+.env
+calls
+voice
